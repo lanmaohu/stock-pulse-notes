@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-server
+.env
+.DS_Store
+data/notes.json
+data/notes.json.tmp
+backups
+npm-debug.log*

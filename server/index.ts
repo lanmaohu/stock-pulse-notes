@@ -1,9 +1,32 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { HealthResponse, LoginResponse, Note, NoteInput, NotesResponse } from "../shared/types.js";
+import { summarizeDate } from "./ai.js";
+import {
+  createNote,
+  deleteNote,
+  ensureDatabase,
+  insertChatMessages,
+  listChatMessages,
+  listDailySummaries,
+  listNotes,
+  listResearchSuggestions,
+  updateNote
+} from "./db.js";
+import { startSummaryScheduler } from "./scheduler.js";
+import type {
+  ChatMessagesResponse,
+  DailySummariesResponse,
+  HealthResponse,
+  HermesMessageInput,
+  HermesWebhookInput,
+  LoginResponse,
+  Note,
+  NoteInput,
+  NotesResponse,
+  ResearchSuggestionsResponse
+} from "../shared/types.js";
 
 function loadEnvFile() {
   const envPath = path.join(process.cwd(), ".env");
@@ -31,8 +54,6 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const dataDir = `${process.cwd()}/data`;
-const notesPath = path.join(dataDir, "notes.json");
 const staticDir = path.join(process.cwd(), "dist");
 const port = Number(process.env.PORT ?? 3000);
 const tokenMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
@@ -47,35 +68,9 @@ class HttpError extends Error {
 }
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
 
-async function ensureDataFile() {
-  await fs.mkdir(dataDir, { recursive: true });
-  try {
-    await fs.access(notesPath);
-  } catch {
-    await fs.writeFile(notesPath, "[]\n", "utf8");
-  }
-}
-
-async function readNotes(): Promise<Note[]> {
-  await ensureDataFile();
-  const raw = await fs.readFile(notesPath, "utf8");
-  const parsed = JSON.parse(raw) as unknown;
-  if (!Array.isArray(parsed)) {
-    throw new HttpError(500, "Notes data is corrupted.");
-  }
-  return parsed as Note[];
-}
-
-async function writeNotes(notes: Note[]) {
-  await ensureDataFile();
-  const tmpPath = `${notesPath}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(notes, null, 2)}\n`, "utf8");
-  await fs.rename(tmpPath, notesPath);
-}
-
-function requireSecret(name: "NOTES_PASSWORD" | "SESSION_SECRET") {
+function requireSecret(name: "NOTES_PASSWORD" | "SESSION_SECRET" | "WEBHOOK_TOKEN") {
   const value = process.env[name];
   if (!value || value.includes("change-this") || value.includes("replace-with")) {
     throw new HttpError(500, `${name} is not configured.`);
@@ -121,6 +116,15 @@ function authMiddleware(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
+function webhookMiddleware(req: Request, _res: Response, next: NextFunction) {
+  const header = req.header("authorization") ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  if (token !== requireSecret("WEBHOOK_TOKEN")) {
+    throw new HttpError(401, "Unauthorized webhook.");
+  }
+  next();
+}
+
 function sanitizeInput(input: NoteInput) {
   const title = typeof input.title === "string" ? input.title.trim().slice(0, 120) : "";
   const content = typeof input.content === "string" ? input.content.slice(0, 50000) : "";
@@ -141,17 +145,32 @@ function sanitizeInput(input: NoteInput) {
   };
 }
 
-function sortNotes(notes: Note[]) {
-  return [...notes].sort((a, b) => {
-    if (a.pinned !== b.pinned) {
-      return a.pinned ? -1 : 1;
-    }
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-  });
+function normalizeWebhookInput(body: HermesWebhookInput): HermesMessageInput[] {
+  if (Array.isArray(body.messages)) {
+    return body.messages;
+  }
+  if (typeof body.sender === "string" && typeof body.content === "string") {
+    return [
+      {
+        externalId: body.externalId,
+        source: body.source,
+        sender: body.sender,
+        content: body.content,
+        messageAt: body.messageAt
+      }
+    ];
+  }
+  throw new HttpError(400, "Webhook body must include messages[] or a single sender/content message.");
+}
+
+function assertDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new HttpError(400, "Date must be YYYY-MM-DD.");
+  }
 }
 
 app.get("/api/health", (_req, res: Response<HealthResponse>) => {
-  res.json({ ok: true, service: "stockpulse" });
+  res.json({ ok: true, service: "stockpulse", storage: "sqlite" });
 });
 
 app.post("/api/login", (req: Request<unknown, LoginResponse, { password?: string }>, res) => {
@@ -162,50 +181,56 @@ app.post("/api/login", (req: Request<unknown, LoginResponse, { password?: string
   res.json({ token: createToken() });
 });
 
-app.get("/api/notes", authMiddleware, async (_req, res: Response<NotesResponse>) => {
-  const notes = await readNotes();
-  res.json({ notes: sortNotes(notes) });
+app.get("/api/notes", authMiddleware, (_req, res: Response<NotesResponse>) => {
+  res.json({ notes: listNotes() });
 });
 
-app.post("/api/notes", authMiddleware, async (req: Request<unknown, Note, NoteInput>, res) => {
-  const notes = await readNotes();
-  const now = new Date().toISOString();
-  const clean = sanitizeInput(req.body);
-  const note: Note = {
-    id: crypto.randomUUID(),
-    ...clean,
-    createdAt: now,
-    updatedAt: now
-  };
-  await writeNotes([note, ...notes]);
+app.post("/api/notes", authMiddleware, (req: Request<unknown, Note, NoteInput>, res) => {
+  const note = createNote(sanitizeInput(req.body));
   res.status(201).json(note);
 });
 
-app.put("/api/notes/:id", authMiddleware, async (req: Request<{ id: string }, Note, NoteInput>, res) => {
-  const notes = await readNotes();
-  const index = notes.findIndex((note) => note.id === req.params.id);
-  if (index === -1) {
+app.put("/api/notes/:id", authMiddleware, (req: Request<{ id: string }, Note, NoteInput>, res) => {
+  const updated = updateNote(req.params.id, sanitizeInput(req.body));
+  if (!updated) {
     throw new HttpError(404, "Note not found.");
   }
-  const clean = sanitizeInput({ ...notes[index], ...req.body });
-  const updated: Note = {
-    ...notes[index],
-    ...clean,
-    updatedAt: new Date().toISOString()
-  };
-  notes[index] = updated;
-  await writeNotes(notes);
   res.json(updated);
 });
 
-app.delete("/api/notes/:id", authMiddleware, async (req, res) => {
-  const notes = await readNotes();
-  const nextNotes = notes.filter((note) => note.id !== req.params.id);
-  if (nextNotes.length === notes.length) {
+app.delete("/api/notes/:id", authMiddleware, (req: Request<{ id: string }>, res) => {
+  if (!deleteNote(req.params.id)) {
     throw new HttpError(404, "Note not found.");
   }
-  await writeNotes(nextNotes);
   res.status(204).end();
+});
+
+app.post("/api/webhooks/hermes/messages", webhookMiddleware, (req: Request<unknown, unknown, HermesWebhookInput>, res) => {
+  const inserted = insertChatMessages(normalizeWebhookInput(req.body));
+  res.status(201).json({ inserted: inserted.length, messages: inserted });
+});
+
+app.get("/api/chat-messages", authMiddleware, (_req, res: Response<ChatMessagesResponse>) => {
+  res.json({ messages: listChatMessages() });
+});
+
+app.get("/api/daily-summaries", authMiddleware, (_req, res: Response<DailySummariesResponse>) => {
+  res.json({ summaries: listDailySummaries() });
+});
+
+app.post("/api/ai/summarize/:date", authMiddleware, async (req: Request<{ date: string }>, res, next) => {
+  assertDate(req.params.date);
+  const regenerate = req.query.regenerate === "true";
+  try {
+    const summary = await summarizeDate(req.params.date, { regenerate });
+    res.json(summary);
+  } catch (error) {
+    next(new HttpError(502, error instanceof Error ? error.message : "AI summary failed."));
+  }
+});
+
+app.get("/api/research-suggestions", authMiddleware, (_req, res: Response<ResearchSuggestionsResponse>) => {
+  res.json({ suggestions: listResearchSuggestions() });
 });
 
 app.use(express.static(staticDir));
@@ -225,6 +250,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 app.listen(port, async () => {
-  await ensureDataFile();
+  await ensureDatabase();
+  startSummaryScheduler();
   console.log(`Stockpulse API listening on http://localhost:${port}`);
 });

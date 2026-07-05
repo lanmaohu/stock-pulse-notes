@@ -3,7 +3,6 @@ dist
 dist-server
 .env
 .DS_Store
-data/notes.json
-data/notes.json.tmp
+data/
 backups
 npm-debug.log*

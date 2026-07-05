@@ -99,6 +99,10 @@ button {
   padding: 0 13px;
 }
 
+.login-panel .primary-button {
+  margin-top: 18px;
+}
+
 .login-panel input:focus,
 .search-box:focus-within,
 .tag-input:focus-within,

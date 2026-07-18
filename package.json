@@ -8,6 +8,7 @@
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "tsc -p tsconfig.server.json && vite build",
+    "test": "tsx --test server/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist-server/server/index.js"
   },
@@ -15,6 +16,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "express": "^4.21.2",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^6.0.5"
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
     "tsx": "^4.19.2",

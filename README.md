@@ -1,96 +1,98 @@
-# Stockpulse Notes
+# Stockpulse
 
-Stockpulse 是一个单人使用的投资研究日志网站。前端使用 React/Vite，后端使用 Express，数据保存到服务器本地 SQLite：`data/stockpulse.sqlite`。
+Stockpulse 是一个单人使用的自媒体投资观点监控工具。V1 支持 B 站扫码绑定、博主订阅、每日采集和投资观点提取；抖音、小红书保留统一适配器，尚未开放真实采集。
+
+旧笔记、聊天、每日总结和 B 站数据会原样保留。启动时会在事务中把旧 B 站视频与观点复制到通用内容模型，迁移可重复执行且不会删除旧表。
+
+## 功能
+
+- `最新观点`：按采集日期展示新内容，同时保留原始发布日期
+- `博主管理`：按主页链接、UID 或名称搜索并确认订阅
+- `平台账号`：通过 B 站 App 扫码绑定，Cookie 加密保存且不会返回前端
+- `采集记录`：查看采集与 AI 分析的独立状态和具体错误
+- `采集设置`：配置 Asia/Shanghai 每日执行时间和单个博主采集条数
+
+新订阅会立即采集最近 5 条内容。之后由持久化任务队列顺序采集、去重并限制请求频率；服务重启后会恢复未完成任务。同一时刻只执行一个采集任务。
 
 ## 本地开发
+
+要求 Node.js 20 或更高版本。
 
 ```bash
 npm install
 cp .env.example .env
+openssl rand -base64 32
 npm run dev
 ```
 
-默认访问 `http://localhost:5173`。API 服务运行在 `http://localhost:3000`。
-
-## 生产构建
-
-```bash
-npm run typecheck
-npm run build
-npm start
-```
+将 `openssl` 输出填入 `.env` 的 `PLATFORM_CREDENTIALS_KEY`。默认页面为 `http://localhost:5173`，API 为 `http://localhost:3000`。
 
 ## 环境变量
 
 ```bash
 PORT=3000
-NOTES_PASSWORD=your-private-password
+APP_PASSWORD=your-private-password
 SESSION_SECRET=your-long-random-secret
+PLATFORM_CREDENTIALS_KEY=base64-encoded-32-byte-key
 WEBHOOK_TOKEN=your-long-random-webhook-token
-AI_PROVIDER=deepseek
-AI_MODEL=deepseek-v4-pro
+AI_MODEL=deepseek-chat
 DEEPSEEK_API_KEY=your-deepseek-api-key
-SUMMARY_CRON_TIME=01:00
+BILIBILI_COLLECT_CRON_TIME=07:30
+BILIBILI_COOKIE=
 ```
 
-`SUMMARY_CRON_TIME` 使用 Asia/Shanghai 的 `HH:mm` 格式。默认每天凌晨 `01:00` 汇总当天聊天和笔记，调用 DeepSeek 生成每日洞察和研究建议。
+- `APP_PASSWORD` 是网站访问密码；未配置时兼容旧的 `NOTES_PASSWORD`。
+- `PLATFORM_CREDENTIALS_KEY` 必须是 32 字节 Base64 或 64 位十六进制字符串。生产环境必须单独生成，丢失后已绑定账号需要重新扫码。
+- `SESSION_SECRET` 用于签名会话 Cookie。生产环境 Cookie 使用 `HttpOnly + Secure + SameSite=Strict`。
+- `BILIBILI_COLLECT_CRON_TIME` 只用于数据库首次初始化，之后在“采集设置”中修改。
+- `BILIBILI_COOKIE` 仅作为旧版本兼容回退；正常使用应在“平台账号”页扫码绑定。
+- 旧 `SUMMARY_CRON_TIME`、`BILIBILI_UP_MIDS` 和 `BILIBILI_BVIDS` 不再启动任务。
 
-## Hermes/Clawbot Webhook
-
-Hermes/Clawbot 可以把微信聊天记录推送到：
+## 校验与构建
 
 ```bash
-POST https://stockpulse.com.cn/api/webhooks/hermes/messages
-Authorization: Bearer $WEBHOOK_TOKEN
-Content-Type: application/json
+npm run typecheck
+npm test
+npm run build
+npm start
 ```
 
-支持单条消息：
+## 主要 API
 
-```json
-{
-  "externalId": "wechat-message-id",
-  "source": "hermes",
-  "sender": "clawbot",
-  "content": "聊天内容",
-  "messageAt": "2026-07-05T20:30:00+08:00"
-}
+登录使用同站 HttpOnly Cookie；旧 Bearer Token 暂时兼容一个版本。
+
+```text
+POST   /api/auth/login
+POST   /api/auth/logout
+GET    /api/auth/session
+GET    /api/platform-accounts
+POST   /api/platform-accounts/bilibili/qr
+GET    /api/platform-accounts/bilibili/qr/:sessionId
+GET    /api/creators/search?q=...
+POST   /api/creators
+GET    /api/content-insights
+POST   /api/collection-runs
+GET    /api/collection-runs/:id
+GET    /api/collection-settings
+PUT    /api/collection-settings
 ```
 
-也支持批量：
+HTTP 412、登录失效、博主不存在、字幕缺失和 AI 失败分别记录。没有字幕时只使用标题、简介和标签生成低置信度观点，不下载或保存原视频。
 
-```json
-{
-  "messages": [
-    {
-      "externalId": "wechat-message-id",
-      "source": "hermes",
-      "sender": "clawbot",
-      "content": "聊天内容",
-      "messageAt": "2026-07-05T20:30:00+08:00"
-    }
-  ]
-}
-```
+## 生产部署
 
-重复的 `source + externalId` 会自动忽略，避免重复归档。
-
-## 阿里云轻量服务器部署
-
-以下步骤默认系统为 Ubuntu，域名为 `stockpulse.com.cn`。
-
-1. 将域名 `A` 记录指向服务器公网 IP。
-2. 安装基础依赖：
+部署前先备份 SQLite，并确保 `.env` 已配置独立的 `PLATFORM_CREDENTIALS_KEY`：
 
 ```bash
-sudo apt update
-sudo apt install -y nginx certbot python3-certbot-nginx
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-sudo npm install -g pm2
+cd /opt/stockpulse
+mkdir -p backups
+cp data/stockpulse.sqlite backups/stockpulse-pre-media-v1.sqlite
+npm install
+npm run build
+pm2 reload stockpulse --update-env
 ```
 
-3. 创建应用目录并上传代码到 `/opt/stockpulse`。同步时排除生产数据和密钥：
+代码同步时必须排除生产密钥和数据：
 
 ```bash
 rsync -az --delete \
@@ -102,49 +104,21 @@ rsync -az --delete \
   ./ admin@your-server:/opt/stockpulse/
 ```
 
-4. 创建生产环境变量：
-
-```bash
-cd /opt/stockpulse
-cp .env.example .env
-nano .env
-```
-
-5. 安装、构建并启动：
-
-```bash
-npm install
-npm run build
-pm2 start dist-server/server/index.js --name stockpulse --update-env
-pm2 save
-pm2 startup
-```
-
-6. 配置 Nginx：
-
-```bash
-sudo cp deploy/nginx.stockpulse.conf /etc/nginx/sites-available/stockpulse
-sudo ln -s /etc/nginx/sites-available/stockpulse /etc/nginx/sites-enabled/stockpulse
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-7. 签发 HTTPS 证书：
-
-```bash
-sudo certbot --nginx -d stockpulse.com.cn -d www.stockpulse.com.cn
-```
-
-8. 验收：
+上线后检查：
 
 ```bash
 curl https://stockpulse.com.cn/api/health
 ```
 
-## 备份
+随后登录网站，在“平台账号”完成 B 站扫码绑定，并用 UID `11473291` 验证订阅、最近 5 条采集、页面刷新和手动重跑。
 
-可以用 `scripts/backup-notes.sh` 备份最近 30 天的 SQLite 数据库：
+## 兼容数据
 
-```bash
-APP_DIR=/opt/stockpulse bash scripts/backup-notes.sh
+旧笔记、聊天、总结、研究建议和 Hermes/Clawbot webhook 数据均保留；对应读取 API 暂时兼容一个版本，但新版页面不再展示，也不会继续执行旧每日总结任务。Webhook 地址仍为：
+
+```text
+POST /api/webhooks/hermes/messages
+Authorization: Bearer $WEBHOOK_TOKEN
 ```
+
+数据库默认位于 `data/stockpulse.sqlite`。`scripts/backup-notes.sh` 可用于日常备份。

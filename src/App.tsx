@@ -9,7 +9,6 @@ import {
   KeyRound,
   Link2,
   LoaderCircle,
-  LogOut,
   Pause,
   Play,
   Plus,
@@ -25,7 +24,6 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type {
-  AuthSessionResponse,
   BilibiliQrSession,
   CollectionRun,
   CollectionRunsResponse,
@@ -44,17 +42,7 @@ import type {
   ViewStance
 } from "../shared/types";
 
-type AuthState = "loading" | "authenticated" | "anonymous";
 type Tab = "insights" | "creators" | "accounts" | "runs" | "settings";
-
-class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number
-  ) {
-    super(message);
-  }
-}
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -67,7 +55,7 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(body.error || "请求失败。", response.status);
+    throw new Error(body.error || "请求失败。");
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -140,52 +128,6 @@ function EmptyState({ icon, title, detail }: { icon: React.ReactNode; title: str
       <strong>{title}</strong>
       <p>{detail}</p>
     </div>
-  );
-}
-
-function Login({ onLogin }: { onLogin: () => void }) {
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api<AuthSessionResponse>("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) });
-      onLogin();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "登录失败。");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <main className="login-shell">
-      <section className="login-panel">
-        <div className="brand-mark"><Activity size={25} /></div>
-        <h1>Stockpulse</h1>
-        <p>自媒体投资观点监控</p>
-        <form onSubmit={submit}>
-          <label htmlFor="password">访问密码</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="输入密码"
-            autoFocus
-          />
-          {error ? <div className="field-error">{error}</div> : null}
-          <button className="primary-button" type="submit" disabled={busy || !password}>
-            {busy ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}
-            登录
-          </button>
-        </form>
-      </section>
-    </main>
   );
 }
 
@@ -640,7 +582,6 @@ function SettingsView({ settings, onSaved }: { settings: CollectionSettingsType;
 }
 
 export function App() {
-  const [auth, setAuth] = useState<AuthState>("loading");
   const [tab, setTab] = useState<Tab>("insights");
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
   const [creators, setCreators] = useState<Creator[]>([]);
@@ -655,10 +596,6 @@ export function App() {
   const [error, setError] = useState("");
 
   const handleError = useCallback((caught: unknown) => {
-    if (caught instanceof ApiError && caught.status === 401) {
-      setAuth("anonymous");
-      return;
-    }
     setError(caught instanceof Error ? caught.message : "操作失败。");
   }, []);
 
@@ -681,7 +618,6 @@ export function App() {
   }, [handleError]);
 
   const loadInsights = useCallback(async () => {
-    if (auth !== "authenticated") return;
     setLoadingInsights(true);
     try {
       const params = new URLSearchParams();
@@ -695,17 +631,11 @@ export function App() {
     } finally {
       setLoadingInsights(false);
     }
-  }, [auth, creatorFilter, handleError, insightDate, insightQuery]);
+  }, [creatorFilter, handleError, insightDate, insightQuery]);
 
   useEffect(() => {
-    void api<AuthSessionResponse>("/api/auth/session")
-      .then(() => setAuth("authenticated"))
-      .catch(() => setAuth("anonymous"));
-  }, []);
-
-  useEffect(() => {
-    if (auth === "authenticated") void loadWorkspace();
-  }, [auth, loadWorkspace]);
+    void loadWorkspace();
+  }, [loadWorkspace]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadInsights(), insightQuery ? 300 : 0);
@@ -714,13 +644,13 @@ export function App() {
 
   const hasActiveRun = runs.some((run) => run.status === "queued" || run.status === "running");
   useEffect(() => {
-    if (!hasActiveRun || auth !== "authenticated") return;
+    if (!hasActiveRun) return;
     const timer = window.setInterval(async () => {
       await loadWorkspace();
       await loadInsights();
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [auth, hasActiveRun, loadInsights, loadWorkspace]);
+  }, [hasActiveRun, loadInsights, loadWorkspace]);
 
   const bilibiliConnected = accounts.some((account) => account.platform === "bilibili" && account.status === "connected");
   const enabledCreators = useMemo(() => creators.filter((creator) => creator.enabled), [creators]);
@@ -742,14 +672,6 @@ export function App() {
     }
   }
 
-  async function logout() {
-    await api<AuthSessionResponse>("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-    setAuth("anonymous");
-  }
-
-  if (auth === "loading") return <main className="boot-screen"><LoaderCircle className="spin" size={28} /><span>正在打开 Stockpulse</span></main>;
-  if (auth === "anonymous") return <Login onLogin={() => setAuth("authenticated")} />;
-
   const navItems: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
     { id: "insights", label: "最新观点", icon: <Activity size={18} /> },
     { id: "creators", label: "博主管理", icon: <Users size={18} /> },
@@ -764,7 +686,7 @@ export function App() {
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark small"><Activity size={20} /></div><div><strong>Stockpulse</strong><span>观点监控</span></div></div>
         <nav>{navItems.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.icon}<span>{item.label}</span>{item.id === "runs" && hasActiveRun ? <i /> : null}</button>)}</nav>
-        <div className="sidebar-status"><div><StatusDot status={bilibiliConnected ? "good" : "warn"} /><span>{bilibiliConnected ? "B 站已连接" : "B 站未连接"}</span></div><button className="icon-button" onClick={() => void logout()} title="退出登录" aria-label="退出登录"><LogOut size={17} /></button></div>
+        <div className="sidebar-status"><div><StatusDot status={bilibiliConnected ? "good" : "warn"} /><span>{bilibiliConnected ? "B 站已连接" : "B 站未连接"}</span></div></div>
       </aside>
 
       <section className="main-column">

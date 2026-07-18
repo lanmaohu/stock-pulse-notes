@@ -2,6 +2,8 @@
 
 Stockpulse 是一个单人使用的自媒体投资观点监控工具。V1 支持 B 站扫码绑定、博主订阅、每日采集和投资观点提取；抖音、小红书保留统一适配器，尚未开放真实采集。
 
+新版工作台不要求网站登录，媒体观点、博主、平台账号和采集设置 API 可直接访问。部署到公网时，应通过网络访问控制限制可访问来源。
+
 旧笔记、聊天、每日总结和 B 站数据会原样保留。启动时会在事务中把旧 B 站视频与观点复制到通用内容模型，迁移可重复执行且不会删除旧表。
 
 ## 功能
@@ -41,9 +43,9 @@ BILIBILI_COLLECT_CRON_TIME=07:30
 BILIBILI_COOKIE=
 ```
 
-- `APP_PASSWORD` 是网站访问密码；未配置时兼容旧的 `NOTES_PASSWORD`。
+- `APP_PASSWORD` 仅用于兼容旧研究 API 的 Bearer Token 登录；未配置时兼容旧的 `NOTES_PASSWORD`。新版工作台不读取该密码。
 - `PLATFORM_CREDENTIALS_KEY` 必须是 32 字节 Base64 或 64 位十六进制字符串。生产环境必须单独生成，丢失后已绑定账号需要重新扫码。
-- `SESSION_SECRET` 用于签名会话 Cookie。生产环境 Cookie 使用 `HttpOnly + Secure + SameSite=Strict`。
+- `SESSION_SECRET` 仅用于签名旧研究 API 的兼容会话。
 - `BILIBILI_COLLECT_CRON_TIME` 只用于数据库首次初始化，之后在“采集设置”中修改。
 - `BILIBILI_COOKIE` 仅作为旧版本兼容回退；正常使用应在“平台账号”页扫码绑定。
 - 旧 `SUMMARY_CRON_TIME`、`BILIBILI_UP_MIDS` 和 `BILIBILI_BVIDS` 不再启动任务。
@@ -59,7 +61,7 @@ npm start
 
 ## 主要 API
 
-登录使用同站 HttpOnly Cookie；旧 Bearer Token 暂时兼容一个版本。
+下列新版媒体监控 API 无需登录。`/api/auth/*` 保留为无操作兼容接口；旧 `/api/login` 仍可生成 Bearer Token，用于访问旧笔记、聊天和总结 API。
 
 ```text
 POST   /api/auth/login
@@ -110,7 +112,7 @@ rsync -az --delete \
 curl https://stockpulse.com.cn/api/health
 ```
 
-随后登录网站，在“平台账号”完成 B 站扫码绑定，并用 UID `11473291` 验证订阅、最近 5 条采集、页面刷新和手动重跑。
+随后打开网站，在“平台账号”完成 B 站扫码绑定，并用 UID `11473291` 验证订阅、最近 5 条采集、页面刷新和手动重跑。
 
 ## 兼容数据
 

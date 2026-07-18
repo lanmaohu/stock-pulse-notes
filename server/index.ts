@@ -214,8 +214,7 @@ app.get("/api/health", (_req, res: Response<HealthResponse>) => {
   res.json({ ok: true, service: "stockpulse", storage: "sqlite" });
 });
 
-app.post("/api/auth/login", (req, res: Response<AuthSessionResponse>) => {
-  login(req, res);
+app.post("/api/auth/login", (_req, res: Response<AuthSessionResponse>) => {
   res.json({ authenticated: true });
 });
 
@@ -223,20 +222,21 @@ app.post("/api/login", (req, res: Response<LoginResponse>) => {
   res.json({ token: login(req, res) });
 });
 
-app.get("/api/auth/session", authMiddleware, (_req, res: Response<AuthSessionResponse>) => {
+app.get("/api/auth/session", (_req, res: Response<AuthSessionResponse>) => {
   res.json({ authenticated: true });
 });
 
 app.post("/api/auth/logout", (_req, res: Response<AuthSessionResponse>) => {
   res.clearCookie(sessionCookie, { path: "/" });
-  res.json({ authenticated: false });
+  res.json({ authenticated: true });
 });
 
-app.get("/api/platform-accounts", authMiddleware, (_req, res: Response<PlatformAccountsResponse>) => {
+// The media-monitoring workspace is intentionally public. Legacy research APIs below keep Bearer authentication.
+app.get("/api/platform-accounts", (_req, res: Response<PlatformAccountsResponse>) => {
   res.json({ accounts: listPlatformAccounts() });
 });
 
-app.post("/api/platform-accounts/bilibili/qr", authMiddleware, async (_req, res, next) => {
+app.post("/api/platform-accounts/bilibili/qr", async (_req, res, next) => {
   try {
     res.status(201).json(await createBilibiliQrSession());
   } catch (error) {
@@ -244,7 +244,7 @@ app.post("/api/platform-accounts/bilibili/qr", authMiddleware, async (_req, res,
   }
 });
 
-app.get("/api/platform-accounts/bilibili/qr/:sessionId", authMiddleware, async (req, res, next) => {
+app.get("/api/platform-accounts/bilibili/qr/:sessionId", async (req, res, next) => {
   try {
     res.json(await pollBilibiliQrSession(routeParam(req, "sessionId")));
   } catch (error) {
@@ -252,7 +252,7 @@ app.get("/api/platform-accounts/bilibili/qr/:sessionId", authMiddleware, async (
   }
 });
 
-app.post("/api/platform-accounts/:id/check", authMiddleware, async (req, res, next) => {
+app.post("/api/platform-accounts/:id/check", async (req, res, next) => {
   const account = listPlatformAccounts().find((item) => item.id === routeParam(req, "id"));
   if (!account) throw new HttpError(404, "平台账号不存在。");
   try {
@@ -262,16 +262,16 @@ app.post("/api/platform-accounts/:id/check", authMiddleware, async (req, res, ne
   }
 });
 
-app.delete("/api/platform-accounts/:id", authMiddleware, (req, res) => {
+app.delete("/api/platform-accounts/:id", (req, res) => {
   if (!deletePlatformAccount(routeParam(req, "id"))) throw new HttpError(404, "平台账号不存在。");
   res.status(204).end();
 });
 
-app.get("/api/creators", authMiddleware, (_req, res: Response<CreatorsResponse>) => {
+app.get("/api/creators", (_req, res: Response<CreatorsResponse>) => {
   res.json({ creators: listCreators() });
 });
 
-app.get("/api/creators/search", authMiddleware, async (req, res: Response<CreatorSearchResponse>, next) => {
+app.get("/api/creators/search", async (req, res: Response<CreatorSearchResponse>, next) => {
   try {
     const platform = platformValue(req.query.platform);
     const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 120) : "";
@@ -282,7 +282,7 @@ app.get("/api/creators/search", authMiddleware, async (req, res: Response<Creato
   }
 });
 
-app.post("/api/creators", authMiddleware, async (req, res, next) => {
+app.post("/api/creators", async (req, res, next) => {
   try {
     const platform = platformValue(req.body?.platform);
     const externalId = typeof req.body?.externalId === "string" ? req.body.externalId.trim().slice(0, 80) : "";
@@ -294,14 +294,14 @@ app.post("/api/creators", authMiddleware, async (req, res, next) => {
   }
 });
 
-app.patch("/api/creators/:id", authMiddleware, (req, res) => {
+app.patch("/api/creators/:id", (req, res) => {
   if (typeof req.body?.enabled !== "boolean") throw new HttpError(400, "enabled must be boolean.");
   const creator = updateCreatorSubscription(routeParam(req, "id"), req.body.enabled);
   if (!creator) throw new HttpError(404, "博主不存在。");
   res.json(creator);
 });
 
-app.get("/api/content-insights", authMiddleware, (req, res: Response<ContentInsightsResponse>) => {
+app.get("/api/content-insights", (req, res: Response<ContentInsightsResponse>) => {
   const collectedDate = typeof req.query.collectedDate === "string" ? req.query.collectedDate : undefined;
   if (collectedDate) assertDate(collectedDate);
   const creatorId = typeof req.query.creatorId === "string" ? req.query.creatorId : undefined;
@@ -309,7 +309,7 @@ app.get("/api/content-insights", authMiddleware, (req, res: Response<ContentInsi
   res.json({ insights: listContentInsights({ collectedDate, creatorId, query }) });
 });
 
-app.post("/api/collection-runs", authMiddleware, (req, res) => {
+app.post("/api/collection-runs", (req, res) => {
   const creatorIds = Array.isArray(req.body?.creatorIds)
     ? req.body.creatorIds.filter((id: unknown): id is string => typeof id === "string").slice(0, 100)
     : undefined;
@@ -320,21 +320,21 @@ app.post("/api/collection-runs", authMiddleware, (req, res) => {
   }
 });
 
-app.get("/api/collection-runs", authMiddleware, (_req, res: Response<CollectionRunsResponse>) => {
+app.get("/api/collection-runs", (_req, res: Response<CollectionRunsResponse>) => {
   res.json({ runs: listCollectionRuns() });
 });
 
-app.get("/api/collection-runs/:id", authMiddleware, (req, res) => {
+app.get("/api/collection-runs/:id", (req, res) => {
   const run = getCollectionRun(routeParam(req, "id"));
   if (!run) throw new HttpError(404, "采集任务不存在。");
   res.json(run);
 });
 
-app.get("/api/collection-settings", authMiddleware, (_req, res: Response<CollectionSettingsResponse>) => {
+app.get("/api/collection-settings", (_req, res: Response<CollectionSettingsResponse>) => {
   res.json({ settings: getCollectionSettings() });
 });
 
-app.put("/api/collection-settings", authMiddleware, (req, res: Response<CollectionSettingsResponse>) => {
+app.put("/api/collection-settings", (req, res: Response<CollectionSettingsResponse>) => {
   const enabled = typeof req.body?.enabled === "boolean" ? req.body.enabled : null;
   const localTime = typeof req.body?.localTime === "string" ? req.body.localTime : "";
   const maxVideosPerCreator = Number(req.body?.maxVideosPerCreator);

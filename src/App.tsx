@@ -1,14 +1,19 @@
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
+  BookOpenCheck,
   CalendarDays,
   CheckCircle2,
   Clock3,
+  Database,
   ExternalLink,
   History,
   KeyRound,
   Link2,
   LoaderCircle,
+  LockKeyhole,
+  LogOut,
   Pause,
   Play,
   Plus,
@@ -24,6 +29,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  AuthSessionResponse,
   BilibiliQrSession,
   CollectionRun,
   CollectionRunsResponse,
@@ -41,8 +47,19 @@ import type {
   ViewConfidence,
   ViewStance
 } from "../shared/types";
+import { publicSecurityFilingUrl, siteConfig } from "./siteConfig";
 
+type AuthState = "loading" | "authenticated" | "anonymous";
 type Tab = "insights" | "creators" | "accounts" | "runs" | "settings";
+
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number
+  ) {
+    super(message);
+  }
+}
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -55,10 +72,18 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error || "请求失败。");
+    throw new ApiError(body.error || "请求失败。", response.status);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+function usePageMetadata(title: string, robots: string) {
+  useEffect(() => {
+    document.title = title;
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
+    if (meta) meta.content = robots;
+  }, [robots, title]);
 }
 
 function todayShanghai() {
@@ -127,6 +152,181 @@ function EmptyState({ icon, title, detail }: { icon: React.ReactNode; title: str
       <span>{icon}</span>
       <strong>{title}</strong>
       <p>{detail}</p>
+    </div>
+  );
+}
+
+function FilingFooter({ compact = false }: { compact?: boolean }) {
+  const publicSecurity = siteConfig.publicSecurity;
+  const showPublicSecurity = Boolean(publicSecurity.number && publicSecurity.recordCode && publicSecurity.iconPath);
+
+  return (
+    <footer className={`filing-footer${compact ? " compact" : ""}`}>
+      <span>© {new Date().getFullYear()} {siteConfig.name}</span>
+      <span className="footer-divider" aria-hidden="true" />
+      <a href={siteConfig.filing.icpUrl} target="_blank" rel="noreferrer">
+        {siteConfig.filing.icpNumber}
+      </a>
+      {showPublicSecurity ? (
+        <>
+          <span className="footer-divider" aria-hidden="true" />
+          <a
+            className="public-security-filing"
+            href={publicSecurityFilingUrl(publicSecurity.recordCode)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <img src={publicSecurity.iconPath} alt="" />
+            {publicSecurity.number}
+          </a>
+        </>
+      ) : null}
+    </footer>
+  );
+}
+
+function LandingPage() {
+  usePageMetadata(`${siteConfig.name}｜${siteConfig.description}`, "index,follow");
+
+  return (
+    <div className="landing-page">
+      <header className="landing-header">
+        <a className="landing-brand" href="/" aria-label={`${siteConfig.name} 首页`}>
+          <span className="brand-mark small"><Activity size={20} /></span>
+          <span><strong>{siteConfig.name}</strong><small>个人信息整理工具</small></span>
+        </a>
+        <a className="workspace-link" href="/app">
+          <LockKeyhole size={16} />
+          私人工作台
+        </a>
+      </header>
+
+      <main className="landing-main">
+        <section className="landing-hero">
+          <div className="landing-copy">
+            <span className="landing-eyebrow">Personal research workspace</span>
+            <h1>把公开信息，整理成自己的研究脉络。</h1>
+            <p>
+              Stockpulse 用于个人收集公开媒体内容、记录来源与观点线索，
+              让分散的信息更容易回看、检索和持续整理。
+            </p>
+            <div className="landing-actions">
+              <a className="landing-primary" href="/app">
+                进入私人工作台
+                <ArrowRight size={18} />
+              </a>
+              <span><LockKeyhole size={15} />仅限站点所有者访问</span>
+            </div>
+          </div>
+
+          <div className="research-board" aria-label="信息整理流程示意">
+            <div className="board-grid" aria-hidden="true" />
+            <article className="board-card source-card">
+              <span className="board-icon"><BookOpenCheck size={18} /></span>
+              <div><small>公开来源</small><strong>保留原始出处</strong></div>
+              <i />
+            </article>
+            <article className="board-card organize-card">
+              <span className="board-icon"><Database size={18} /></span>
+              <div><small>结构化整理</small><strong>归纳观点与风险</strong></div>
+              <div className="organize-lines"><i /><i /><i /></div>
+            </article>
+            <article className="board-card private-card">
+              <span className="board-icon"><LockKeyhole size={18} /></span>
+              <div><small>私人记录</small><strong>只为本人研究</strong></div>
+              <span className="private-badge">PRIVATE</span>
+            </article>
+            <div className="board-caption">
+              <Activity size={15} />
+              <span>来源清晰 · 便于回溯 · 私人使用</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-principles" aria-labelledby="principles-title">
+          <div>
+            <span className="section-index">01</span>
+            <h2 id="principles-title">公开内容归档</h2>
+            <p>整理来自公开媒体的信息，并保留内容标题、发布时间与原始链接。</p>
+          </div>
+          <div>
+            <span className="section-index">02</span>
+            <h2>个人研究记录</h2>
+            <p>将零散线索归入自己的研究流程，方便检索、复盘和持续跟踪。</p>
+          </div>
+          <div>
+            <span className="section-index">03</span>
+            <h2>默认私密访问</h2>
+            <p>工作台不对公众开放，账号、采集设置与整理结果均需登录查看。</p>
+          </div>
+        </section>
+
+        <section className="landing-notice" aria-labelledby="notice-title">
+          <div className="notice-mark"><ShieldCheck size={24} /></div>
+          <div>
+            <span>使用说明</span>
+            <h2 id="notice-title">一个非经营性的个人资料整理站点</h2>
+            <p>
+              本站不开放用户注册，不收取费用，不提供荐股、证券期货投资咨询或交易服务。
+              工作台中的整理内容仅供站点所有者个人学习与资料管理，不构成任何投资建议。
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <FilingFooter />
+    </div>
+  );
+}
+
+function Login({ onLogin }: { onLogin: () => void }) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api<AuthSessionResponse>("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) });
+      onLogin();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "登录失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <a className="back-home" href="/"><ArrowRight size={16} />返回首页</a>
+      <main className="login-shell">
+        <section className="login-panel">
+          <div className="brand-mark"><Activity size={25} /></div>
+          <span className="login-kicker">Private workspace</span>
+          <h1>进入私人工作台</h1>
+          <p>观点、账号和采集设置仅对站点所有者开放。</p>
+          <form onSubmit={submit}>
+            <label htmlFor="password">访问密码</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="输入访问密码"
+              autoComplete="current-password"
+              autoFocus
+            />
+            {error ? <div className="field-error" role="alert">{error}</div> : null}
+            <button className="primary-button" type="submit" disabled={busy || !password}>
+              {busy ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}
+              登录
+            </button>
+          </form>
+        </section>
+      </main>
+      <FilingFooter compact />
     </div>
   );
 }
@@ -581,7 +781,8 @@ function SettingsView({ settings, onSaved }: { settings: CollectionSettingsType;
   );
 }
 
-export function App() {
+function WorkspaceApp() {
+  const [auth, setAuth] = useState<AuthState>("loading");
   const [tab, setTab] = useState<Tab>("insights");
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
   const [creators, setCreators] = useState<Creator[]>([]);
@@ -595,7 +796,13 @@ export function App() {
   const [busyRun, setBusyRun] = useState(false);
   const [error, setError] = useState("");
 
+  usePageMetadata(`私人工作台｜${siteConfig.name}`, "noindex,nofollow");
+
   const handleError = useCallback((caught: unknown) => {
+    if (caught instanceof ApiError && caught.status === 401) {
+      setAuth("anonymous");
+      return;
+    }
     setError(caught instanceof Error ? caught.message : "操作失败。");
   }, []);
 
@@ -618,6 +825,7 @@ export function App() {
   }, [handleError]);
 
   const loadInsights = useCallback(async () => {
+    if (auth !== "authenticated") return;
     setLoadingInsights(true);
     try {
       const params = new URLSearchParams();
@@ -631,11 +839,17 @@ export function App() {
     } finally {
       setLoadingInsights(false);
     }
-  }, [creatorFilter, handleError, insightDate, insightQuery]);
+  }, [auth, creatorFilter, handleError, insightDate, insightQuery]);
 
   useEffect(() => {
-    void loadWorkspace();
-  }, [loadWorkspace]);
+    void api<AuthSessionResponse>("/api/auth/session")
+      .then(() => setAuth("authenticated"))
+      .catch(() => setAuth("anonymous"));
+  }, []);
+
+  useEffect(() => {
+    if (auth === "authenticated") void loadWorkspace();
+  }, [auth, loadWorkspace]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadInsights(), insightQuery ? 300 : 0);
@@ -644,13 +858,13 @@ export function App() {
 
   const hasActiveRun = runs.some((run) => run.status === "queued" || run.status === "running");
   useEffect(() => {
-    if (!hasActiveRun) return;
+    if (!hasActiveRun || auth !== "authenticated") return;
     const timer = window.setInterval(async () => {
       await loadWorkspace();
       await loadInsights();
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [hasActiveRun, loadInsights, loadWorkspace]);
+  }, [auth, hasActiveRun, loadInsights, loadWorkspace]);
 
   const bilibiliConnected = accounts.some((account) => account.platform === "bilibili" && account.status === "connected");
   const enabledCreators = useMemo(() => creators.filter((creator) => creator.enabled), [creators]);
@@ -672,6 +886,16 @@ export function App() {
     }
   }
 
+  async function logout() {
+    await api<AuthSessionResponse>("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    window.location.assign("/");
+  }
+
+  if (auth === "loading") {
+    return <main className="boot-screen"><LoaderCircle className="spin" size={28} /><span>正在打开私人工作台</span></main>;
+  }
+  if (auth === "anonymous") return <Login onLogin={() => setAuth("authenticated")} />;
+
   const navItems: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
     { id: "insights", label: "最新观点", icon: <Activity size={18} /> },
     { id: "creators", label: "博主管理", icon: <Users size={18} /> },
@@ -686,7 +910,7 @@ export function App() {
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark small"><Activity size={20} /></div><div><strong>Stockpulse</strong><span>观点监控</span></div></div>
         <nav>{navItems.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.icon}<span>{item.label}</span>{item.id === "runs" && hasActiveRun ? <i /> : null}</button>)}</nav>
-        <div className="sidebar-status"><div><StatusDot status={bilibiliConnected ? "good" : "warn"} /><span>{bilibiliConnected ? "B 站已连接" : "B 站未连接"}</span></div></div>
+        <div className="sidebar-status"><div><StatusDot status={bilibiliConnected ? "good" : "warn"} /><span>{bilibiliConnected ? "B 站已连接" : "B 站未连接"}</span></div><button className="icon-button" onClick={() => void logout()} title="退出登录" aria-label="退出登录"><LogOut size={17} /></button></div>
       </aside>
 
       <section className="main-column">
@@ -697,6 +921,7 @@ export function App() {
             <button className="primary-button compact" onClick={() => void runNow()} disabled={busyRun || hasActiveRun || !bilibiliConnected || !enabledCreators.length}>
               {busyRun || hasActiveRun ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}{hasActiveRun ? "采集中" : "立即采集"}
             </button>
+            <button className="icon-button mobile-logout" onClick={() => void logout()} title="退出登录" aria-label="退出登录"><LogOut size={17} /></button>
           </div>
         </header>
 
@@ -713,4 +938,9 @@ export function App() {
       </section>
     </main>
   );
+}
+
+export function App() {
+  const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
+  return pathname === "/app" ? <WorkspaceApp /> : <LandingPage />;
 }

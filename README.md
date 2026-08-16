@@ -2,7 +2,7 @@
 
 Stockpulse 是一个单人使用的自媒体投资观点监控工具。V1 支持 B 站扫码绑定、博主订阅、每日采集和投资观点提取；抖音、小红书保留统一适配器，尚未开放真实采集。
 
-新版工作台不要求网站登录，媒体观点、博主、平台账号和采集设置 API 可直接访问。部署到公网时，应通过网络访问控制限制可访问来源。
+根路径 `/` 是公开的个人非经营性网站介绍页，工作台位于 `/app`。媒体观点、博主、平台账号、采集设置和相关 API 均需要网站密码登录。
 
 旧笔记、聊天、每日总结和 B 站数据会原样保留。启动时会在事务中把旧 B 站视频与观点复制到通用内容模型，迁移可重复执行且不会删除旧表。
 
@@ -27,7 +27,7 @@ openssl rand -base64 32
 npm run dev
 ```
 
-将 `openssl` 输出填入 `.env` 的 `PLATFORM_CREDENTIALS_KEY`。默认页面为 `http://localhost:5173`，API 为 `http://localhost:3000`。
+将 `openssl` 输出填入 `.env` 的 `PLATFORM_CREDENTIALS_KEY`。公开首页为 `http://localhost:5173`，私人工作台为 `http://localhost:5173/app`，API 为 `http://localhost:3000`。
 
 ## 环境变量
 
@@ -43,9 +43,9 @@ BILIBILI_COLLECT_CRON_TIME=07:30
 BILIBILI_COOKIE=
 ```
 
-- `APP_PASSWORD` 仅用于兼容旧研究 API 的 Bearer Token 登录；未配置时兼容旧的 `NOTES_PASSWORD`。新版工作台不读取该密码。
+- `APP_PASSWORD` 是私人工作台和兼容研究 API 的访问密码；未配置时兼容旧的 `NOTES_PASSWORD`。
 - `PLATFORM_CREDENTIALS_KEY` 必须是 32 字节 Base64 或 64 位十六进制字符串。生产环境必须单独生成，丢失后已绑定账号需要重新扫码。
-- `SESSION_SECRET` 仅用于签名旧研究 API 的兼容会话。
+- `SESSION_SECRET` 用于签名网站会话 Cookie。生产环境 Cookie 使用 `HttpOnly + Secure + SameSite=Strict`。
 - `BILIBILI_COLLECT_CRON_TIME` 只用于数据库首次初始化，之后在“采集设置”中修改。
 - `BILIBILI_COOKIE` 仅作为旧版本兼容回退；正常使用应在“平台账号”页扫码绑定。
 - 旧 `SUMMARY_CRON_TIME`、`BILIBILI_UP_MIDS` 和 `BILIBILI_BVIDS` 不再启动任务。
@@ -61,7 +61,7 @@ npm start
 
 ## 主要 API
 
-下列新版媒体监控 API 无需登录。`/api/auth/*` 保留为无操作兼容接口；旧 `/api/login` 仍可生成 Bearer Token，用于访问旧笔记、聊天和总结 API。
+除 `/api/health`、登录/退出和使用独立 Bearer Token 的 webhook 外，所有 API 都要求同站会话。旧 `/api/login` 继续生成兼容 Bearer Token。
 
 ```text
 POST   /api/auth/login
@@ -81,9 +81,15 @@ PUT    /api/collection-settings
 
 HTTP 412、登录失效、博主不存在、字幕缺失和 AI 失败分别记录。没有字幕时只使用标题、简介和标签生成低置信度观点，不下载或保存原视频。
 
+## 网站备案
+
+公开首页底部展示网站服务备案号 `粤ICP备2026023302号-1`，并链接工信部备案系统。备案公开配置位于 `src/siteConfig.ts`。
+
+公安联网备案尚未办理。取得真实编号后，同时配置 `publicSecurity.number`、`publicSecurity.recordCode` 和本地备案图标路径；三个字段不完整时页面不会显示公安备案入口。
+
 ## 生产部署
 
-部署前先备份 SQLite，并确保 `.env` 已配置独立的 `PLATFORM_CREDENTIALS_KEY`：
+部署前先备份 SQLite，并确保 `.env` 已配置独立的 `APP_PASSWORD`、`SESSION_SECRET` 和 `PLATFORM_CREDENTIALS_KEY`：
 
 ```bash
 cd /opt/stockpulse
@@ -110,9 +116,10 @@ rsync -az --delete \
 
 ```bash
 curl https://stockpulse.com.cn/api/health
+curl -i https://stockpulse.com.cn/api/content-insights
 ```
 
-随后打开网站，在“平台账号”完成 B 站扫码绑定，并用 UID `11473291` 验证订阅、最近 5 条采集、页面刷新和手动重跑。
+第二个请求应返回 `401`。随后检查公开首页的备案链接，登录 `/app`，再验证平台账号、订阅、采集和退出登录。
 
 ## 兼容数据
 

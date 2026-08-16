@@ -87,7 +87,7 @@ class HttpError extends Error {
   }
 }
 
-const app = express();
+export const app = express();
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "2mb" }));
 
@@ -214,7 +214,8 @@ app.get("/api/health", (_req, res: Response<HealthResponse>) => {
   res.json({ ok: true, service: "stockpulse", storage: "sqlite" });
 });
 
-app.post("/api/auth/login", (_req, res: Response<AuthSessionResponse>) => {
+app.post("/api/auth/login", (req, res: Response<AuthSessionResponse>) => {
+  login(req, res);
   res.json({ authenticated: true });
 });
 
@@ -222,16 +223,23 @@ app.post("/api/login", (req, res: Response<LoginResponse>) => {
   res.json({ token: login(req, res) });
 });
 
+app.post("/api/auth/logout", (_req, res: Response<AuthSessionResponse>) => {
+  res.clearCookie(sessionCookie, { path: "/" });
+  res.json({ authenticated: false });
+});
+
+app.post("/api/webhooks/hermes/messages", webhookMiddleware, (req: Request<unknown, unknown, HermesWebhookInput>, res) => {
+  const inserted = insertChatMessages(normalizeWebhookInput(req.body));
+  res.status(201).json({ inserted: inserted.length, messages: inserted });
+});
+
+// All remaining API routes belong to the private workspace.
+app.use("/api", authMiddleware);
+
 app.get("/api/auth/session", (_req, res: Response<AuthSessionResponse>) => {
   res.json({ authenticated: true });
 });
 
-app.post("/api/auth/logout", (_req, res: Response<AuthSessionResponse>) => {
-  res.clearCookie(sessionCookie, { path: "/" });
-  res.json({ authenticated: true });
-});
-
-// The media-monitoring workspace is intentionally public. Legacy research APIs below keep Bearer authentication.
 app.get("/api/platform-accounts", (_req, res: Response<PlatformAccountsResponse>) => {
   res.json({ accounts: listPlatformAccounts() });
 });
@@ -346,30 +354,26 @@ app.put("/api/collection-settings", (req, res: Response<CollectionSettingsRespon
 });
 
 // Legacy research APIs remain available for one compatibility release.
-app.get("/api/notes", authMiddleware, (_req, res: Response<NotesResponse>) => res.json({ notes: listNotes() }));
-app.post("/api/notes", authMiddleware, (req: Request<unknown, Note, NoteInput>, res) => {
+app.get("/api/notes", (_req, res: Response<NotesResponse>) => res.json({ notes: listNotes() }));
+app.post("/api/notes", (req: Request<unknown, Note, NoteInput>, res) => {
   res.status(201).json(createNote(sanitizeInput(req.body)));
 });
-app.put("/api/notes/:id", authMiddleware, (req: Request<{ id: string }, Note, NoteInput>, res) => {
+app.put("/api/notes/:id", (req: Request<{ id: string }, Note, NoteInput>, res) => {
   const updated = updateNote(req.params.id, sanitizeInput(req.body));
   if (!updated) throw new HttpError(404, "Note not found.");
   res.json(updated);
 });
-app.delete("/api/notes/:id", authMiddleware, (req, res) => {
+app.delete("/api/notes/:id", (req, res) => {
   if (!deleteNote(routeParam(req, "id"))) throw new HttpError(404, "Note not found.");
   res.status(204).end();
 });
-app.post("/api/webhooks/hermes/messages", webhookMiddleware, (req: Request<unknown, unknown, HermesWebhookInput>, res) => {
-  const inserted = insertChatMessages(normalizeWebhookInput(req.body));
-  res.status(201).json({ inserted: inserted.length, messages: inserted });
-});
-app.get("/api/chat-messages", authMiddleware, (_req, res: Response<ChatMessagesResponse>) => {
+app.get("/api/chat-messages", (_req, res: Response<ChatMessagesResponse>) => {
   res.json({ messages: listChatMessages() });
 });
-app.get("/api/daily-summaries", authMiddleware, (_req, res: Response<DailySummariesResponse>) => {
+app.get("/api/daily-summaries", (_req, res: Response<DailySummariesResponse>) => {
   res.json({ summaries: listDailySummaries() });
 });
-app.post("/api/ai/summarize/:date", authMiddleware, async (req, res, next) => {
+app.post("/api/ai/summarize/:date", async (req, res, next) => {
   const date = routeParam(req, "date");
   assertDate(date);
   try {
@@ -378,13 +382,13 @@ app.post("/api/ai/summarize/:date", authMiddleware, async (req, res, next) => {
     next(new HttpError(502, error instanceof Error ? error.message : "AI summary failed."));
   }
 });
-app.get("/api/research-suggestions", authMiddleware, (_req, res: Response<ResearchSuggestionsResponse>) => {
+app.get("/api/research-suggestions", (_req, res: Response<ResearchSuggestionsResponse>) => {
   res.json({ suggestions: listResearchSuggestions() });
 });
-app.get("/api/bilibili/videos", authMiddleware, (_req, res: Response<BilibiliVideosResponse>) => {
+app.get("/api/bilibili/videos", (_req, res: Response<BilibiliVideosResponse>) => {
   res.json({ videos: listBilibiliVideos() });
 });
-app.get("/api/bilibili/stock-views", authMiddleware, (_req, res: Response<VideoStockViewsResponse>) => {
+app.get("/api/bilibili/stock-views", (_req, res: Response<VideoStockViewsResponse>) => {
   res.json({ views: listVideoStockViews() });
 });
 
@@ -399,9 +403,15 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(status).json({ error: message });
 });
 
-app.listen(port, async () => {
+export async function startServer() {
   await ensureDatabase();
   startCollectionWorker();
   startCollectionScheduler();
-  console.log(`Stockpulse API listening on http://localhost:${port}`);
-});
+  return app.listen(port, () => {
+    console.log(`Stockpulse API listening on http://localhost:${port}`);
+  });
+}
+
+if (process.env.NODE_ENV !== "test") {
+  void startServer();
+}

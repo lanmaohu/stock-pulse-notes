@@ -2,7 +2,7 @@ export const siteConfig = {
   name: "Stockpulse",
   domain: "stockpulse.com.cn",
   url: "https://stockpulse.com.cn",
-  description: "个人公开信息整理与研究记录工具",
+  description: "自媒体投资观点监控与研究整理工具",
   filing: {
     icpNumber: "粤ICP备2026023302号-1",
     icpUrl: "https://beian.miit.gov.cn/"

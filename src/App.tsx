@@ -1,14 +1,10 @@
 import {
   Activity,
   AlertTriangle,
-  ArrowRight,
-  BookOpenCheck,
   CalendarDays,
   CheckCircle2,
   Clock3,
-  Database,
   ExternalLink,
-  Globe2,
   History,
   KeyRound,
   Link2,
@@ -144,12 +140,14 @@ function EmptyState({ icon, title, detail }: { icon: React.ReactNode; title: str
   );
 }
 
-function FilingFooter({ compact = false }: { compact?: boolean }) {
+function FilingFooter() {
   const publicSecurity = siteConfig.publicSecurity;
   const showPublicSecurity = Boolean(publicSecurity.number && publicSecurity.recordCode && publicSecurity.iconPath);
 
   return (
-    <footer className={`filing-footer${compact ? " compact" : ""}`}>
+    <footer className="filing-footer workspace-footer">
+      <span className="filing-disclaimer">公开信息整理与学习参考，不构成任何投资建议</span>
+      <span className="footer-divider" aria-hidden="true" />
       <span>© {new Date().getFullYear()} {siteConfig.name}</span>
       <span className="footer-divider" aria-hidden="true" />
       <a href={siteConfig.filing.icpUrl} target="_blank" rel="noreferrer">
@@ -170,100 +168,6 @@ function FilingFooter({ compact = false }: { compact?: boolean }) {
         </>
       ) : null}
     </footer>
-  );
-}
-
-function LandingPage() {
-  usePageMetadata(`${siteConfig.name}｜${siteConfig.description}`, "index,follow");
-
-  return (
-    <div className="landing-page">
-      <header className="landing-header">
-        <a className="landing-brand" href="/" aria-label={`${siteConfig.name} 首页`}>
-          <span className="brand-mark small"><Activity size={20} /></span>
-          <span><strong>{siteConfig.name}</strong><small>个人信息整理工具</small></span>
-        </a>
-        <a className="workspace-link" href="/app">
-          <Globe2 size={16} />
-          公开工作台
-        </a>
-      </header>
-
-      <main className="landing-main">
-        <section className="landing-hero">
-          <div className="landing-copy">
-            <span className="landing-eyebrow">Personal research workspace</span>
-            <h1>把公开信息，整理成自己的研究脉络。</h1>
-            <p>
-              Stockpulse 用于个人收集公开媒体内容、记录来源与观点线索，
-              让分散的信息更容易回看、检索和持续整理。
-            </p>
-            <div className="landing-actions">
-              <a className="landing-primary" href="/app">
-                查看公开工作台
-                <ArrowRight size={18} />
-              </a>
-              <span><Globe2 size={15} />所有内容公开浏览</span>
-            </div>
-          </div>
-
-          <div className="research-board" aria-label="信息整理流程示意">
-            <div className="board-grid" aria-hidden="true" />
-            <article className="board-card source-card">
-              <span className="board-icon"><BookOpenCheck size={18} /></span>
-              <div><small>公开来源</small><strong>保留原始出处</strong></div>
-              <i />
-            </article>
-            <article className="board-card organize-card">
-              <span className="board-icon"><Database size={18} /></span>
-              <div><small>结构化整理</small><strong>归纳观点与风险</strong></div>
-              <div className="organize-lines"><i /><i /><i /></div>
-            </article>
-            <article className="board-card public-card">
-              <span className="board-icon"><Globe2 size={18} /></span>
-              <div><small>公开浏览</small><strong>无需注册登录</strong></div>
-              <span className="public-badge">PUBLIC</span>
-            </article>
-            <div className="board-caption">
-              <Activity size={15} />
-              <span>来源清晰 · 便于回溯 · 公开浏览</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="landing-principles" aria-labelledby="principles-title">
-          <div>
-            <span className="section-index">01</span>
-            <h2 id="principles-title">公开内容归档</h2>
-            <p>整理来自公开媒体的信息，并保留内容标题、发布时间与原始链接。</p>
-          </div>
-          <div>
-            <span className="section-index">02</span>
-            <h2>个人研究记录</h2>
-            <p>将零散线索归入自己的研究流程，方便检索、复盘和持续跟踪。</p>
-          </div>
-          <div>
-            <span className="section-index">03</span>
-            <h2>公开透明浏览</h2>
-            <p>观点、博主、采集状态和工作台功能全部公开，无需注册或登录。</p>
-          </div>
-        </section>
-
-        <section className="landing-notice" aria-labelledby="notice-title">
-          <div className="notice-mark"><ShieldCheck size={24} /></div>
-          <div>
-            <span>使用说明</span>
-            <h2 id="notice-title">一个非经营性的个人资料整理站点</h2>
-            <p>
-              本站不开放用户注册，不收取费用，不提供荐股、证券期货投资咨询或交易服务。
-              站内整理内容公开展示，仅作资料整理和学习参考，不构成任何投资建议。
-            </p>
-          </div>
-        </section>
-      </main>
-
-      <FilingFooter />
-    </div>
   );
 }
 
@@ -731,7 +635,7 @@ function WorkspaceApp() {
   const [busyRun, setBusyRun] = useState(false);
   const [error, setError] = useState("");
 
-  usePageMetadata(`公开工作台｜${siteConfig.name}`, "index,follow");
+  usePageMetadata(`${siteConfig.name}｜自媒体投资观点监控`, "index,follow");
 
   const handleError = useCallback((caught: unknown) => {
     setError(caught instanceof Error ? caught.message : "操作失败。");
@@ -848,12 +752,12 @@ function WorkspaceApp() {
           {tab === "runs" ? <RunsView runs={runs} onRefresh={() => void loadWorkspace()} /> : null}
           {tab === "settings" && settings ? <SettingsView settings={settings} onSaved={setSettings} /> : null}
         </div>
+        <FilingFooter />
       </section>
     </main>
   );
 }
 
 export function App() {
-  const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
-  return pathname === "/app" ? <WorkspaceApp /> : <LandingPage />;
+  return <WorkspaceApp />;
 }

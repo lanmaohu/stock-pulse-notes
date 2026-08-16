@@ -2,7 +2,7 @@
 
 Stockpulse 是一个单人使用的自媒体投资观点监控工具。V1 支持 B 站扫码绑定、博主订阅、每日采集和投资观点提取；抖音、小红书保留统一适配器，尚未开放真实采集。
 
-根路径 `/` 是公开的个人非经营性网站介绍页，公开工作台位于 `/app`。媒体观点、博主、平台账号、采集记录、采集设置和相关 API 均无需登录即可访问。
+根路径 `/` 直接展示公开工作台，媒体观点、博主、平台账号、采集记录、采集设置和相关 API 均无需登录即可访问。生产环境中的旧路径 `/app` 和 `/app/` 会永久重定向到 `/`。
 
 旧笔记、聊天、每日总结和 B 站数据会原样保留。启动时会在事务中把旧 B 站视频与观点复制到通用内容模型，迁移可重复执行且不会删除旧表。
 
@@ -27,7 +27,7 @@ openssl rand -base64 32
 npm run dev
 ```
 
-将 `openssl` 输出填入 `.env` 的 `PLATFORM_CREDENTIALS_KEY`。公开首页为 `http://localhost:5173`，公开工作台为 `http://localhost:5173/app`，API 为 `http://localhost:3000`。
+将 `openssl` 输出填入 `.env` 的 `PLATFORM_CREDENTIALS_KEY`。公开工作台为 `http://localhost:5173`，API 为 `http://localhost:3000`。
 
 ## 环境变量
 
@@ -83,7 +83,7 @@ HTTP 412、博主不存在、字幕缺失和 AI 失败分别记录。没有字�
 
 ## 网站备案
 
-公开首页底部展示网站服务备案号 `粤ICP备2026023302号-1`，并链接工信部备案系统。备案公开配置位于 `src/siteConfig.ts`。
+公开工作台底部展示“仅供资料整理和学习参考，不构成投资建议”、网站服务备案号 `粤ICP备2026023302号-1`，并链接工信部备案系统。备案公开配置位于 `src/siteConfig.ts`。
 
 公安联网备案尚未办理。取得真实编号后，同时配置 `publicSecurity.number`、`publicSecurity.recordCode` 和本地备案图标路径；三个字段不完整时页面不会显示公安备案入口。
 
@@ -117,9 +117,10 @@ rsync -az --delete \
 ```bash
 curl https://stockpulse.com.cn/api/health
 curl -i https://stockpulse.com.cn/api/content-insights
+curl -I https://stockpulse.com.cn/app
 ```
 
-第二个请求应返回 `200`。随后检查公开首页的备案链接，直接打开 `/app`，再验证平台账号、订阅和采集。
+第二个请求应返回 `200`，第三个请求应返回指向 `/` 的 `301`。随后直接打开 `/`，检查备案与免责声明，再验证平台账号、订阅和采集。
 
 ## 兼容数据
 

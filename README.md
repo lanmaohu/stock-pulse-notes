@@ -2,7 +2,7 @@
 
 Stockpulse 是一个单人使用的自媒体投资观点监控工具。V1 支持 B 站扫码绑定、博主订阅、每日采集和投资观点提取；抖音、小红书保留统一适配器，尚未开放真实采集。
 
-根路径 `/` 是公开的个人非经营性网站介绍页，工作台位于 `/app`。媒体观点、博主、平台账号、采集设置和相关 API 均需要网站密码登录。
+根路径 `/` 是公开的个人非经营性网站介绍页，公开工作台位于 `/app`。媒体观点、博主、平台账号、采集记录、采集设置和相关 API 均无需登录即可访问。
 
 旧笔记、聊天、每日总结和 B 站数据会原样保留。启动时会在事务中把旧 B 站视频与观点复制到通用内容模型，迁移可重复执行且不会删除旧表。
 
@@ -27,7 +27,7 @@ openssl rand -base64 32
 npm run dev
 ```
 
-将 `openssl` 输出填入 `.env` 的 `PLATFORM_CREDENTIALS_KEY`。公开首页为 `http://localhost:5173`，私人工作台为 `http://localhost:5173/app`，API 为 `http://localhost:3000`。
+将 `openssl` 输出填入 `.env` 的 `PLATFORM_CREDENTIALS_KEY`。公开首页为 `http://localhost:5173`，公开工作台为 `http://localhost:5173/app`，API 为 `http://localhost:3000`。
 
 ## 环境变量
 
@@ -43,9 +43,9 @@ BILIBILI_COLLECT_CRON_TIME=07:30
 BILIBILI_COOKIE=
 ```
 
-- `APP_PASSWORD` 是私人工作台和兼容研究 API 的访问密码；未配置时兼容旧的 `NOTES_PASSWORD`。
+- `APP_PASSWORD` 仅供旧 `/api/login` 兼容接口使用；公开工作台不读取该密码。未配置时兼容旧的 `NOTES_PASSWORD`。
 - `PLATFORM_CREDENTIALS_KEY` 必须是 32 字节 Base64 或 64 位十六进制字符串。生产环境必须单独生成，丢失后已绑定账号需要重新扫码。
-- `SESSION_SECRET` 用于签名网站会话 Cookie。生产环境 Cookie 使用 `HttpOnly + Secure + SameSite=Strict`。
+- `SESSION_SECRET` 仅用于签名旧 `/api/login` 兼容接口生成的令牌。
 - `BILIBILI_COLLECT_CRON_TIME` 只用于数据库首次初始化，之后在“采集设置”中修改。
 - `BILIBILI_COOKIE` 仅作为旧版本兼容回退；正常使用应在“平台账号”页扫码绑定。
 - 旧 `SUMMARY_CRON_TIME`、`BILIBILI_UP_MIDS` 和 `BILIBILI_BVIDS` 不再启动任务。
@@ -61,7 +61,7 @@ npm start
 
 ## 主要 API
 
-除 `/api/health`、登录/退出和使用独立 Bearer Token 的 webhook 外，所有 API 都要求同站会话。旧 `/api/login` 继续生成兼容 Bearer Token。
+网站数据与操作 API 均公开访问。`/api/auth/*` 保留为无操作兼容接口，旧 `/api/login` 仍可生成兼容 Bearer Token；Hermes webhook 继续使用独立 Bearer Token，防止外部伪造消息。
 
 ```text
 POST   /api/auth/login
@@ -79,7 +79,7 @@ GET    /api/collection-settings
 PUT    /api/collection-settings
 ```
 
-HTTP 412、登录失效、博主不存在、字幕缺失和 AI 失败分别记录。没有字幕时只使用标题、简介和标签生成低置信度观点，不下载或保存原视频。
+HTTP 412、博主不存在、字幕缺失和 AI 失败分别记录。没有字幕时只使用标题、简介和标签生成低置信度观点，不下载或保存原视频。
 
 ## 网站备案
 
@@ -89,7 +89,7 @@ HTTP 412、登录失效、博主不存在、字幕缺失和 AI 失败分别记�
 
 ## 生产部署
 
-部署前先备份 SQLite，并确保 `.env` 已配置独立的 `APP_PASSWORD`、`SESSION_SECRET` 和 `PLATFORM_CREDENTIALS_KEY`：
+部署前先备份 SQLite，并确保 `.env` 已配置独立的 `PLATFORM_CREDENTIALS_KEY` 和 `WEBHOOK_TOKEN`；若仍使用旧 `/api/login`，还需配置 `APP_PASSWORD` 和 `SESSION_SECRET`：
 
 ```bash
 cd /opt/stockpulse
@@ -119,7 +119,7 @@ curl https://stockpulse.com.cn/api/health
 curl -i https://stockpulse.com.cn/api/content-insights
 ```
 
-第二个请求应返回 `401`。随后检查公开首页的备案链接，登录 `/app`，再验证平台账号、订阅、采集和退出登录。
+第二个请求应返回 `200`。随后检查公开首页的备案链接，直接打开 `/app`，再验证平台账号、订阅和采集。
 
 ## 兼容数据
 

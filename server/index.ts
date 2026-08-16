@@ -114,38 +114,6 @@ function createToken() {
   return `${payload}.${signToken(payload)}`;
 }
 
-function verifyToken(token: string) {
-  const [payload, signature] = token.split(".");
-  if (!payload || !signature || !safeEqual(signToken(payload), signature)) return false;
-  try {
-    const body = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { exp?: number };
-    return typeof body.exp === "number" && body.exp > Date.now();
-  } catch {
-    return false;
-  }
-}
-
-function cookieValue(req: Request, name: string) {
-  const header = req.header("cookie") || "";
-  for (const item of header.split(";")) {
-    const separator = item.indexOf("=");
-    if (separator > 0 && item.slice(0, separator).trim() === name) {
-      return decodeURIComponent(item.slice(separator + 1).trim());
-    }
-  }
-  return "";
-}
-
-function requestToken(req: Request) {
-  const header = req.header("authorization") || "";
-  return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : cookieValue(req, sessionCookie);
-}
-
-function authMiddleware(req: Request, _res: Response, next: NextFunction) {
-  if (!verifyToken(requestToken(req))) throw new HttpError(401, "Unauthorized.");
-  next();
-}
-
 function webhookMiddleware(req: Request, _res: Response, next: NextFunction) {
   const header = req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -214,8 +182,7 @@ app.get("/api/health", (_req, res: Response<HealthResponse>) => {
   res.json({ ok: true, service: "stockpulse", storage: "sqlite" });
 });
 
-app.post("/api/auth/login", (req, res: Response<AuthSessionResponse>) => {
-  login(req, res);
+app.post("/api/auth/login", (_req, res: Response<AuthSessionResponse>) => {
   res.json({ authenticated: true });
 });
 
@@ -225,7 +192,7 @@ app.post("/api/login", (req, res: Response<LoginResponse>) => {
 
 app.post("/api/auth/logout", (_req, res: Response<AuthSessionResponse>) => {
   res.clearCookie(sessionCookie, { path: "/" });
-  res.json({ authenticated: false });
+  res.json({ authenticated: true });
 });
 
 app.post("/api/webhooks/hermes/messages", webhookMiddleware, (req: Request<unknown, unknown, HermesWebhookInput>, res) => {
@@ -233,12 +200,11 @@ app.post("/api/webhooks/hermes/messages", webhookMiddleware, (req: Request<unkno
   res.status(201).json({ inserted: inserted.length, messages: inserted });
 });
 
-// All remaining API routes belong to the private workspace.
-app.use("/api", authMiddleware);
-
 app.get("/api/auth/session", (_req, res: Response<AuthSessionResponse>) => {
   res.json({ authenticated: true });
 });
+
+// Website data and controls are intentionally public. The webhook keeps its own bearer-token boundary.
 
 app.get("/api/platform-accounts", (_req, res: Response<PlatformAccountsResponse>) => {
   res.json({ accounts: listPlatformAccounts() });

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { databasePath } from "./config.js";
 import type {
   BilibiliCreator,
   BilibiliVideo,
@@ -12,7 +13,9 @@ import type {
   CollectionRunStatus,
   CollectionRunTrigger,
   CollectionSettings,
-  ContentInsight,
+  ContentCreatorOption,
+  ContentInsightsPageSize,
+  ContentInsightsResponse,
   ContentItem,
   ContentStockView,
   Creator,
@@ -20,19 +23,32 @@ import type {
   DailySummary,
   HermesMessageInput,
   Note,
-  NoteInput,
   Platform,
   PlatformAccount,
   PlatformAccountStatus,
+  PortfolioAccessLevel,
+  PortfolioCashBalance,
+  PortfolioCashView,
+  PortfolioCurrency,
+  PortfolioDraft,
+  PortfolioDraftPosition,
+  PortfolioDraftResponse,
+  PortfolioFxRate,
+  PortfolioPositionView,
+  PortfolioResponse,
+  PortfolioSectorView,
+  PortfolioView,
   ResearchSuggestion,
   VideoStockView
 } from "../shared/types.js";
 
-const dataDir = path.join(process.cwd(), "data");
+const dbPath = databasePath();
+const dataDir = path.dirname(dbPath);
 const legacyNotesPath = path.join(dataDir, "notes.json");
-const dbPath = process.env.STOCKPULSE_DB_PATH || path.join(dataDir, "stockpulse.sqlite");
+const currentSchemaMigration = "2026-08-stability-v1";
 
 let db: DatabaseSync | null = null;
+let schemaReady = false;
 
 type NoteRow = Omit<Note, "tags" | "pinned"> & { tags: string; pinned: number };
 type ChatMessageRow = ChatMessage;
@@ -98,6 +114,8 @@ type CollectionRunRow = Omit<CollectionRun, "items" | "scheduledFor" | "error" |
   error: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: number | null;
 };
 type CollectionRunItemRow = Omit<
   CollectionRunItem,
@@ -108,6 +126,24 @@ type CollectionRunItemRow = Omit<
   startedAt: string | null;
   completedAt: string | null;
 };
+type PortfolioSnapshotRow = {
+  id: string;
+  status: "draft" | "published";
+  title: string;
+  subtitle: string;
+  ownerName: string;
+  avatarUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt: string | null;
+};
+type PortfolioPositionRow = Omit<PortfolioDraftPosition, "logoUrl"> & {
+  id: string;
+  snapshotId: string;
+  logoUrl: string | null;
+};
+type PortfolioCashRow = PortfolioCashBalance & { id: string; snapshotId: string };
+type PortfolioFxRow = PortfolioFxRate & { id: string; snapshotId: string };
 
 export interface SummaryInput {
   date: string;
@@ -314,8 +350,9 @@ function toCollectionRunItem(row: CollectionRunItemRow): CollectionRunItem {
 }
 
 function toCollectionRun(row: CollectionRunRow, items: CollectionRunItem[] = []): CollectionRun {
+  const { leaseOwner: _leaseOwner, leaseExpiresAt: _leaseExpiresAt, ...publicRow } = row;
   return {
-    ...row,
+    ...publicRow,
     scheduledFor: row.scheduledFor || undefined,
     error: row.error || undefined,
     startedAt: row.startedAt || undefined,
@@ -328,14 +365,13 @@ function database() {
   if (!db) {
     fs.mkdirSync(dataDir, { recursive: true });
     db = new DatabaseSync(dbPath);
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-    migrate();
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   }
   return db;
 }
 
 function migrate() {
-  const conn = db!;
+  const conn = database();
   conn.exec(`
     CREATE TABLE IF NOT EXISTS notes (
       id TEXT PRIMARY KEY,
@@ -556,6 +592,8 @@ function migrate() {
       error TEXT,
       startedAt TEXT,
       completedAt TEXT,
+      leaseOwner TEXT,
+      leaseExpiresAt INTEGER,
       createdAt TEXT NOT NULL
     );
 
@@ -589,15 +627,91 @@ function migrate() {
       updatedAt TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS auth_login_attempts (
+      scope TEXT NOT NULL,
+      address TEXT NOT NULL,
+      attemptCount INTEGER NOT NULL,
+      resetAt INTEGER NOT NULL,
+      updatedAt TEXT NOT NULL,
+      PRIMARY KEY(scope, address)
+    );
+
+    CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK(status IN ('draft', 'published')),
+      title TEXT NOT NULL,
+      subtitle TEXT NOT NULL,
+      ownerName TEXT NOT NULL,
+      avatarUrl TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      publishedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS portfolio_positions (
+      id TEXT PRIMARY KEY,
+      snapshotId TEXT NOT NULL,
+      positionKey TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      name TEXT NOT NULL,
+      assetType TEXT NOT NULL CHECK(assetType IN ('stock', 'etf')),
+      market TEXT NOT NULL,
+      sector TEXT NOT NULL,
+      currency TEXT NOT NULL CHECK(currency IN ('CNY', 'HKD', 'USD')),
+      quantity REAL NOT NULL CHECK(quantity >= 0),
+      averageCost REAL NOT NULL CHECK(averageCost >= 0),
+      lastPrice REAL NOT NULL CHECK(lastPrice >= 0),
+      logoUrl TEXT,
+      sortOrder INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(snapshotId, positionKey),
+      UNIQUE(snapshotId, market, symbol),
+      FOREIGN KEY(snapshotId) REFERENCES portfolio_snapshots(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS portfolio_cash_balances (
+      id TEXT PRIMARY KEY,
+      snapshotId TEXT NOT NULL,
+      currency TEXT NOT NULL CHECK(currency IN ('CNY', 'HKD', 'USD')),
+      balance REAL NOT NULL CHECK(balance >= 0),
+      UNIQUE(snapshotId, currency),
+      FOREIGN KEY(snapshotId) REFERENCES portfolio_snapshots(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS portfolio_fx_rates (
+      id TEXT PRIMARY KEY,
+      snapshotId TEXT NOT NULL,
+      currency TEXT NOT NULL CHECK(currency IN ('CNY', 'HKD', 'USD')),
+      rateToCny REAL NOT NULL CHECK(rateToCny > 0),
+      UNIQUE(snapshotId, currency),
+      FOREIGN KEY(snapshotId) REFERENCES portfolio_snapshots(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_content_items_collected ON content_items(collectedAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_content_items_published
+      ON content_items(publishedAt DESC, collectedAt DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_content_items_creator ON content_items(creatorId, publishedAt DESC);
     CREATE INDEX IF NOT EXISTS idx_content_views_content ON content_stock_views(contentId);
     CREATE INDEX IF NOT EXISTS idx_run_items_run ON collection_run_items(runId);
+    CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_reset ON auth_login_attempts(resetAt);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_portfolio_single_draft
+      ON portfolio_snapshots(status) WHERE status = 'draft';
+    CREATE INDEX IF NOT EXISTS idx_portfolio_published
+      ON portfolio_snapshots(publishedAt DESC) WHERE status = 'published';
+    CREATE INDEX IF NOT EXISTS idx_portfolio_positions_snapshot
+      ON portfolio_positions(snapshotId, sortOrder);
   `);
 
   const summaryColumns = conn.prepare("PRAGMA table_info(daily_summaries)").all() as Array<{ name: string }>;
   if (!summaryColumns.some((column) => column.name === "sourceVideoViewCount")) {
     conn.exec("ALTER TABLE daily_summaries ADD COLUMN sourceVideoViewCount INTEGER NOT NULL DEFAULT 0");
+  }
+
+  const runColumns = conn.prepare("PRAGMA table_info(collection_runs)").all() as Array<{ name: string }>;
+  if (!runColumns.some((column) => column.name === "leaseOwner")) {
+    conn.exec("ALTER TABLE collection_runs ADD COLUMN leaseOwner TEXT");
+  }
+  if (!runColumns.some((column) => column.name === "leaseExpiresAt")) {
+    conn.exec("ALTER TABLE collection_runs ADD COLUMN leaseExpiresAt INTEGER");
   }
 
   const noteCount = conn.prepare("SELECT COUNT(*) AS count FROM notes").get() as { count: number } | undefined;
@@ -631,7 +745,37 @@ function migrate() {
        VALUES ('owner', 1, ?, 'Asia/Shanghai', 5, ?)`
     )
     .run(configuredTime, new Date().toISOString());
+  const portfolioDraft = conn.prepare("SELECT id FROM portfolio_snapshots WHERE status = 'draft'").get() as { id: string } | undefined;
+  if (!portfolioDraft) {
+    const now = new Date().toISOString();
+    const snapshotId = crypto.randomUUID();
+    conn.exec("BEGIN");
+    try {
+      conn.prepare(`
+        INSERT INTO portfolio_snapshots (
+          id, status, title, subtitle, ownerName, avatarUrl, createdAt, updatedAt, publishedAt
+        ) VALUES (?, 'draft', ?, ?, ?, NULL, ?, ?, NULL)
+      `).run(snapshotId, "我的持仓全景图", "按板块分类的个人资产配置", "Stockpulse", now, now);
+      const insertCash = conn.prepare(`
+        INSERT INTO portfolio_cash_balances (id, snapshotId, currency, balance) VALUES (?, ?, ?, 0)
+      `);
+      const insertFx = conn.prepare(`
+        INSERT INTO portfolio_fx_rates (id, snapshotId, currency, rateToCny) VALUES (?, ?, ?, ?)
+      `);
+      for (const currency of ["CNY", "HKD", "USD"] as PortfolioCurrency[]) {
+        insertCash.run(crypto.randomUUID(), snapshotId, currency);
+        insertFx.run(crypto.randomUUID(), snapshotId, currency, currency === "CNY" ? 1 : 1);
+      }
+      conn.exec("COMMIT");
+    } catch (error) {
+      conn.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  conn.exec("PRAGMA optimize");
   migrateLegacyBilibili(conn);
+  conn.prepare("INSERT OR IGNORE INTO schema_migrations (name, appliedAt) VALUES (?, ?)")
+    .run(currentSchemaMigration, new Date().toISOString());
 }
 
 function migrateLegacyBilibili(conn: DatabaseSync) {
@@ -762,7 +906,52 @@ function migrateLegacyBilibili(conn: DatabaseSync) {
 
 export async function ensureDatabase() {
   await fsp.mkdir(dataDir, { recursive: true });
-  database();
+  if (!schemaReady) {
+    migrate();
+    schemaReady = true;
+  }
+}
+
+export async function verifyDatabaseSchema() {
+  await fsp.mkdir(dataDir, { recursive: true });
+  const row = database()
+    .prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name IN ('content_items', 'collection_runs', 'portfolio_snapshots')")
+    .get() as { count: number } | undefined;
+  const version = database().prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(currentSchemaMigration);
+  if (row?.count !== 3 || !version) throw new Error("Database schema is not current. Run npm run migrate first.");
+  schemaReady = true;
+}
+
+export function databaseIsHealthy() {
+  try {
+    return (database().prepare("SELECT 1 AS ok").get() as { ok?: number } | undefined)?.ok === 1;
+  } catch {
+    return false;
+  }
+}
+
+export function assertLoginAllowed(scope: string, address: string, now = Date.now()) {
+  const conn = database();
+  conn.prepare("DELETE FROM auth_login_attempts WHERE resetAt <= ?").run(now);
+  const row = conn
+    .prepare("SELECT attemptCount, resetAt FROM auth_login_attempts WHERE scope = ? AND address = ?")
+    .get(scope, address) as { attemptCount: number; resetAt: number } | undefined;
+  return !row || row.resetAt <= now || row.attemptCount < 5;
+}
+
+export function recordLoginFailure(scope: string, address: string, resetAt: number) {
+  database().prepare(`
+    INSERT INTO auth_login_attempts (scope, address, attemptCount, resetAt, updatedAt)
+    VALUES (?, ?, 1, ?, ?)
+    ON CONFLICT(scope, address) DO UPDATE SET
+      attemptCount = CASE WHEN auth_login_attempts.resetAt <= ? THEN 1 ELSE auth_login_attempts.attemptCount + 1 END,
+      resetAt = CASE WHEN auth_login_attempts.resetAt <= ? THEN excluded.resetAt ELSE auth_login_attempts.resetAt END,
+      updatedAt = excluded.updatedAt
+  `).run(scope, address, resetAt, new Date().toISOString(), Date.now(), Date.now());
+}
+
+export function clearLoginFailures(scope: string, address: string) {
+  database().prepare("DELETE FROM auth_login_attempts WHERE scope = ? AND address = ?").run(scope, address);
 }
 
 export function listNotes(): Note[] {
@@ -1251,6 +1440,15 @@ export function listCreators(options: { enabledOnly?: boolean; ids?: string[] } 
   return rows.map(toCreator);
 }
 
+export function listContentCreatorOptions(): ContentCreatorOption[] {
+  return database().prepare(`
+    SELECT c.id, c.name, c.platform
+    FROM creators c
+    WHERE EXISTS (SELECT 1 FROM content_items i WHERE i.creatorId = c.id)
+    ORDER BY lower(c.name) ASC, c.id ASC
+  `).all() as unknown as ContentCreatorOption[];
+}
+
 export function getCreator(id: string): Creator | null {
   const row = database().prepare("SELECT * FROM creators WHERE id = ?").get(id) as CreatorRow | undefined;
   return row ? toCreator(row) : null;
@@ -1440,18 +1638,21 @@ export function saveContentStockViews(content: ContentItem, views: ContentStockV
 }
 
 export function listContentInsights(options: {
+  publishedDate?: string;
   collectedDate?: string;
   creatorId?: string;
   query?: string;
-  limit?: number;
-} = {}): ContentInsight[] {
+  page?: number;
+  pageSize?: ContentInsightsPageSize;
+} = {}): ContentInsightsResponse {
   const clauses: string[] = [];
   const values: Array<string | number> = [];
-  if (options.collectedDate) {
-    const start = new Date(`${options.collectedDate}T00:00:00.000+08:00`).toISOString();
-    const end = new Date(`${options.collectedDate}T23:59:59.999+08:00`).toISOString();
-    clauses.push("c.collectedAt BETWEEN ? AND ?");
-    values.push(start, end);
+  const filteredDate = options.publishedDate || options.collectedDate;
+  if (filteredDate) {
+    const start = new Date(`${filteredDate}T00:00:00.000+08:00`);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    clauses.push(`c.${options.publishedDate ? "publishedAt" : "collectedAt"} >= ? AND c.${options.publishedDate ? "publishedAt" : "collectedAt"} < ?`);
+    values.push(start.toISOString(), end.toISOString());
   }
   if (options.creatorId) {
     clauses.push("c.creatorId = ?");
@@ -1471,15 +1672,42 @@ export function listContentInsights(options: {
     values.push(query, query, query, query, query, query);
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const limit = Math.min(Math.max(options.limit || 100, 1), 200);
-  const contentRows = database()
-    .prepare(`SELECT c.* FROM content_items c ${where} ORDER BY datetime(c.collectedAt) DESC, datetime(c.publishedAt) DESC LIMIT ?`)
-    .all(...values, limit) as ContentItemRow[];
-  if (!contentRows.length) {
-    return [];
-  }
+  const pageSize = options.pageSize || 10;
+  const requestedPage = options.page || 1;
+  const conn = database();
+  const aggregate = conn.prepare(`
+    WITH filtered_content AS (
+      SELECT c.id FROM content_items c ${where}
+    ), targets AS (
+      SELECT trim(CAST(symbol.value AS TEXT)) AS target
+      FROM content_stock_views v
+      JOIN filtered_content f ON f.id = v.contentId,
+      json_each(v.symbols) symbol
+      UNION
+      SELECT trim(CAST(company.value AS TEXT)) AS target
+      FROM content_stock_views v
+      JOIN filtered_content f ON f.id = v.contentId,
+      json_each(v.companies) company
+    )
+    SELECT
+      (SELECT COUNT(*) FROM filtered_content) AS contentCount,
+      (SELECT COUNT(*) FROM content_stock_views v JOIN filtered_content f ON f.id = v.contentId) AS viewCount,
+      (SELECT COUNT(*) FROM targets WHERE target <> '') AS targetCount
+  `).get(...values) as { contentCount: number; viewCount: number; targetCount: number };
+  const totalPages = aggregate.contentCount ? Math.ceil(aggregate.contentCount / pageSize) : 0;
+  const page = totalPages ? Math.min(requestedPage, totalPages) : 1;
+  const contentRows = conn
+    .prepare(`SELECT c.* FROM content_items c ${where} ORDER BY c.publishedAt DESC, c.collectedAt DESC, c.id DESC LIMIT ? OFFSET ?`)
+    .all(...values, pageSize, (page - 1) * pageSize) as ContentItemRow[];
+  const pagination = { page, pageSize, totalItems: aggregate.contentCount, totalPages };
+  const summary = {
+    contentCount: aggregate.contentCount,
+    viewCount: aggregate.viewCount,
+    targetCount: aggregate.targetCount
+  };
+  if (!contentRows.length) return { insights: [], pagination, summary };
   const ids = contentRows.map((row) => row.id);
-  const viewRows = database()
+  const viewRows = conn
     .prepare(`SELECT * FROM content_stock_views WHERE contentId IN (${ids.map(() => "?").join(",")}) ORDER BY createdAt ASC`)
     .all(...ids) as ContentStockViewRow[];
   const viewsByContent = new Map<string, ContentStockView[]>();
@@ -1488,7 +1716,11 @@ export function listContentInsights(options: {
     views.push(toContentStockView(row));
     viewsByContent.set(row.contentId, views);
   }
-  return contentRows.map((row) => ({ content: toContentItem(row), views: viewsByContent.get(row.id) || [] }));
+  return {
+    insights: contentRows.map((row) => ({ content: toContentItem(row), views: viewsByContent.get(row.id) || [] })),
+    pagination,
+    summary
+  };
 }
 
 function runItems(runId: string) {
@@ -1558,6 +1790,54 @@ export function getNextQueuedCollectionRun() {
     .prepare("SELECT * FROM collection_runs WHERE status = 'queued' ORDER BY datetime(createdAt) ASC LIMIT 1")
     .get() as CollectionRunRow | undefined;
   return row ? toCollectionRun(row, runItems(row.id)) : null;
+}
+
+export function claimNextQueuedCollectionRun(
+  leaseOwner = "single-worker",
+  leaseExpiresAt = Date.now() + 2 * 60 * 1000
+) {
+  const conn = database();
+  conn.exec("BEGIN IMMEDIATE");
+  try {
+    const queued = conn
+      .prepare(`
+        SELECT id, status FROM collection_runs
+        WHERE status = 'queued' OR (status = 'running' AND (leaseExpiresAt IS NULL OR leaseExpiresAt <= ?))
+        ORDER BY datetime(createdAt) ASC, rowid ASC LIMIT 1
+      `)
+      .get(Date.now()) as { id: string; status: CollectionRunStatus } | undefined;
+    if (!queued) {
+      conn.exec("COMMIT");
+      return null;
+    }
+    if (queued.status === "running") {
+      conn.prepare(`
+        UPDATE collection_run_items
+        SET status = 'queued', startedAt = NULL, completedAt = NULL, errorCode = NULL, error = NULL
+        WHERE runId = ? AND status = 'running'
+      `).run(queued.id);
+    }
+    const result = conn
+      .prepare(`
+        UPDATE collection_runs
+        SET status = 'running', startedAt = COALESCE(startedAt, ?), error = NULL,
+            leaseOwner = ?, leaseExpiresAt = ?
+        WHERE id = ? AND (status = 'queued' OR (status = 'running' AND (leaseExpiresAt IS NULL OR leaseExpiresAt <= ?)))
+      `)
+      .run(new Date().toISOString(), leaseOwner, leaseExpiresAt, queued.id, Date.now());
+    conn.exec("COMMIT");
+    return Number(result.changes) === 1 ? getCollectionRun(queued.id) : null;
+  } catch (error) {
+    conn.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function renewCollectionRunLease(id: string, leaseOwner: string, leaseExpiresAt: number) {
+  const result = database()
+    .prepare("UPDATE collection_runs SET leaseExpiresAt = ? WHERE id = ? AND status = 'running' AND leaseOwner = ?")
+    .run(leaseExpiresAt, id, leaseOwner);
+  return Number(result.changes) === 1;
 }
 
 export function startCollectionRun(id: string) {
@@ -1631,7 +1911,7 @@ export function finishCollectionRun(id: string, fatalError?: string) {
     .prepare(
       `UPDATE collection_runs
        SET status = ?, creatorCount = ?, discoveredCount = ?, newContentCount = ?, analyzedCount = ?,
-           errorCount = ?, error = ?, completedAt = ?
+           errorCount = ?, error = ?, completedAt = ?, leaseOwner = NULL, leaseExpiresAt = NULL
        WHERE id = ?`
     )
     .run(
@@ -1648,19 +1928,34 @@ export function finishCollectionRun(id: string, fatalError?: string) {
   return getCollectionRun(id)!;
 }
 
-export function recoverInterruptedCollectionRuns() {
+export function recoverInterruptedCollectionRuns(now = Date.now()) {
   const conn = database();
-  conn.exec("BEGIN");
+  conn.exec("BEGIN IMMEDIATE");
   try {
-    conn.prepare("UPDATE collection_runs SET status = 'queued', startedAt = NULL WHERE status = 'running'").run();
+    const expired = conn.prepare(`
+      SELECT id FROM collection_runs
+      WHERE status = 'running' AND (leaseExpiresAt IS NULL OR leaseExpiresAt <= ?)
+    `).all(now) as Array<{ id: string }>;
+    const ids = expired.map((row) => row.id);
+    if (!ids.length) {
+      conn.exec("COMMIT");
+      return 0;
+    }
+    const placeholders = ids.map(() => "?").join(",");
+    conn.prepare(`
+      UPDATE collection_runs
+      SET status = 'queued', startedAt = NULL, leaseOwner = NULL, leaseExpiresAt = NULL
+      WHERE id IN (${placeholders})
+    `).run(...ids);
     conn
       .prepare(
         `UPDATE collection_run_items
          SET status = 'queued', startedAt = NULL, completedAt = NULL, errorCode = NULL, error = NULL
-         WHERE status = 'running'`
+         WHERE status = 'running' AND runId IN (${placeholders})`
       )
-      .run();
+      .run(...ids);
     conn.exec("COMMIT");
+    return ids.length;
   } catch (error) {
     conn.exec("ROLLBACK");
     throw error;
@@ -1694,4 +1989,317 @@ export function updateCollectionSettings(input: { enabled: boolean; localTime: s
     )
     .run(input.enabled ? 1 : 0, input.localTime, input.maxVideosPerCreator, now);
   return getCollectionSettings();
+}
+
+const portfolioCurrencies: PortfolioCurrency[] = ["CNY", "HKD", "USD"];
+const portfolioSectorColors = ["#bf2f25", "#83b92f", "#32312f", "#42a7d6", "#cf672c", "#5369dc", "#9a58b5", "#178a78"];
+
+function portfolioNumber(value: unknown, label: string, options: { positive?: boolean } = {}) {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number) || number < 0 || (options.positive && number <= 0)) {
+    throw new Error(`${label}必须是${options.positive ? "大于 0" : "不小于 0"}的数字。`);
+  }
+  return number;
+}
+
+function portfolioText(value: unknown, fallback: string, maxLength: number) {
+  const text = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  return (text || fallback).slice(0, maxLength);
+}
+
+function portfolioImageUrl(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "https:") throw new Error("图片地址必须使用 HTTPS。");
+    return url.toString().slice(0, 1000);
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : "图片地址无效。");
+  }
+}
+
+function portfolioCurrency(value: unknown): PortfolioCurrency {
+  if (value === "CNY" || value === "HKD" || value === "USD") return value;
+  throw new Error("币种只支持 CNY、HKD 或 USD。");
+}
+
+function normalizePortfolioDraft(input: PortfolioDraft): PortfolioDraft {
+  if (!input || typeof input !== "object") throw new Error("持仓草稿格式不正确。");
+  if (!Array.isArray(input.positions) || input.positions.length > 200) throw new Error("持仓数量不能超过 200 条。");
+  const seenKeys = new Set<string>();
+  const seenSymbols = new Set<string>();
+  const positions = input.positions.map((position, index) => {
+    const positionKey = /^[a-zA-Z0-9_-]{8,80}$/.test(position.positionKey || "")
+      ? position.positionKey
+      : crypto.randomUUID();
+    const symbol = portfolioText(position.symbol, "", 24).toUpperCase();
+    const market = portfolioText(position.market, "", 40);
+    if (!symbol || !market) throw new Error(`第 ${index + 1} 条持仓缺少代码或市场。`);
+    const uniquenessKey = `${market.toLowerCase()}::${symbol.toLowerCase()}`;
+    if (seenKeys.has(positionKey) || seenSymbols.has(uniquenessKey)) throw new Error("同一市场不能存在重复持仓代码。");
+    seenKeys.add(positionKey);
+    seenSymbols.add(uniquenessKey);
+    if (position.assetType !== "stock" && position.assetType !== "etf") throw new Error("资产类型只支持股票或 ETF。");
+    return {
+      positionKey,
+      symbol,
+      name: portfolioText(position.name, symbol, 80),
+      assetType: position.assetType,
+      market,
+      sector: portfolioText(position.sector, "其他", 40),
+      currency: portfolioCurrency(position.currency),
+      quantity: portfolioNumber(position.quantity, `${symbol} 股数`),
+      averageCost: portfolioNumber(position.averageCost, `${symbol} 平均成本`),
+      lastPrice: portfolioNumber(position.lastPrice, `${symbol} 最新价`),
+      logoUrl: portfolioImageUrl(position.logoUrl),
+      sortOrder: index
+    } satisfies PortfolioDraftPosition;
+  });
+
+  const cashByCurrency = new Map<PortfolioCurrency, number>();
+  for (const cash of Array.isArray(input.cashBalances) ? input.cashBalances : []) {
+    const currency = portfolioCurrency(cash.currency);
+    if (cashByCurrency.has(currency)) throw new Error(`现金币种 ${currency} 重复。`);
+    cashByCurrency.set(currency, portfolioNumber(cash.balance, `${currency} 现金`));
+  }
+  const fxByCurrency = new Map<PortfolioCurrency, number>();
+  for (const fx of Array.isArray(input.fxRates) ? input.fxRates : []) {
+    const currency = portfolioCurrency(fx.currency);
+    if (fxByCurrency.has(currency)) throw new Error(`汇率币种 ${currency} 重复。`);
+    fxByCurrency.set(currency, currency === "CNY" ? 1 : portfolioNumber(fx.rateToCny, `${currency} 汇率`, { positive: true }));
+  }
+  for (const position of positions) {
+    if (position.currency !== "CNY" && !fxByCurrency.has(position.currency)) {
+      throw new Error(`请填写 ${position.currency} 兑人民币汇率。`);
+    }
+  }
+  return {
+    id: input.id || "",
+    title: portfolioText(input.title, "我的持仓全景图", 80),
+    subtitle: portfolioText(input.subtitle, "按板块分类的个人资产配置", 160),
+    ownerName: portfolioText(input.ownerName, "Stockpulse", 80),
+    avatarUrl: portfolioImageUrl(input.avatarUrl),
+    positions,
+    cashBalances: portfolioCurrencies.map((currency) => ({ currency, balance: cashByCurrency.get(currency) || 0 })),
+    fxRates: portfolioCurrencies.map((currency) => ({ currency, rateToCny: currency === "CNY" ? 1 : fxByCurrency.get(currency) || 1 })),
+    updatedAt: input.updatedAt || new Date().toISOString()
+  };
+}
+
+function readPortfolioSnapshot(conn: DatabaseSync, row: PortfolioSnapshotRow): PortfolioDraft {
+  const positions = conn
+    .prepare("SELECT * FROM portfolio_positions WHERE snapshotId = ? ORDER BY sortOrder ASC, rowid ASC")
+    .all(row.id) as PortfolioPositionRow[];
+  const cash = conn
+    .prepare("SELECT * FROM portfolio_cash_balances WHERE snapshotId = ? ORDER BY currency ASC")
+    .all(row.id) as unknown as PortfolioCashRow[];
+  const fxRates = conn
+    .prepare("SELECT * FROM portfolio_fx_rates WHERE snapshotId = ? ORDER BY currency ASC")
+    .all(row.id) as unknown as PortfolioFxRow[];
+  return {
+    id: row.id,
+    title: row.title,
+    subtitle: row.subtitle,
+    ownerName: row.ownerName,
+    avatarUrl: row.avatarUrl || undefined,
+    positions: positions.map(({ id: _id, snapshotId: _snapshotId, logoUrl, ...position }) => ({
+      ...position,
+      logoUrl: logoUrl || undefined
+    })),
+    cashBalances: cash.map(({ id: _id, snapshotId: _snapshotId, ...item }) => item),
+    fxRates: fxRates.map(({ id: _id, snapshotId: _snapshotId, ...item }) => item),
+    updatedAt: row.updatedAt
+  };
+}
+
+function latestPortfolioRows(conn: DatabaseSync) {
+  return conn
+    .prepare("SELECT * FROM portfolio_snapshots WHERE status = 'published' ORDER BY datetime(publishedAt) DESC, rowid DESC LIMIT 2")
+    .all() as PortfolioSnapshotRow[];
+}
+
+export function getPortfolioDraft(): PortfolioDraftResponse {
+  const conn = database();
+  const row = conn.prepare("SELECT * FROM portfolio_snapshots WHERE status = 'draft'").get() as PortfolioSnapshotRow;
+  const latest = latestPortfolioRows(conn)[0];
+  return {
+    draft: readPortfolioSnapshot(conn, row),
+    dirty: !latest || row.updatedAt > (latest.publishedAt || latest.updatedAt),
+    latestPublishedAt: latest?.publishedAt || undefined
+  };
+}
+
+export function savePortfolioDraft(input: PortfolioDraft): PortfolioDraftResponse {
+  const conn = database();
+  const current = conn.prepare("SELECT * FROM portfolio_snapshots WHERE status = 'draft'").get() as PortfolioSnapshotRow;
+  const draft = normalizePortfolioDraft(input);
+  const now = new Date().toISOString();
+  conn.exec("BEGIN");
+  try {
+    conn.prepare(`
+      UPDATE portfolio_snapshots
+      SET title = ?, subtitle = ?, ownerName = ?, avatarUrl = ?, updatedAt = ?
+      WHERE id = ? AND status = 'draft'
+    `).run(draft.title, draft.subtitle, draft.ownerName, draft.avatarUrl || null, now, current.id);
+    conn.prepare("DELETE FROM portfolio_positions WHERE snapshotId = ?").run(current.id);
+    conn.prepare("DELETE FROM portfolio_cash_balances WHERE snapshotId = ?").run(current.id);
+    conn.prepare("DELETE FROM portfolio_fx_rates WHERE snapshotId = ?").run(current.id);
+    const insertPosition = conn.prepare(`
+      INSERT INTO portfolio_positions (
+        id, snapshotId, positionKey, symbol, name, assetType, market, sector, currency,
+        quantity, averageCost, lastPrice, logoUrl, sortOrder
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const position of draft.positions) {
+      insertPosition.run(
+        crypto.randomUUID(), current.id, position.positionKey, position.symbol, position.name, position.assetType,
+        position.market, position.sector, position.currency, position.quantity, position.averageCost,
+        position.lastPrice, position.logoUrl || null, position.sortOrder
+      );
+    }
+    const insertCash = conn.prepare("INSERT INTO portfolio_cash_balances (id, snapshotId, currency, balance) VALUES (?, ?, ?, ?)");
+    for (const cash of draft.cashBalances) insertCash.run(crypto.randomUUID(), current.id, cash.currency, cash.balance);
+    const insertFx = conn.prepare("INSERT INTO portfolio_fx_rates (id, snapshotId, currency, rateToCny) VALUES (?, ?, ?, ?)");
+    for (const fx of draft.fxRates) insertFx.run(crypto.randomUUID(), current.id, fx.currency, fx.rateToCny);
+    conn.exec("COMMIT");
+  } catch (error) {
+    conn.exec("ROLLBACK");
+    throw error;
+  }
+  return getPortfolioDraft();
+}
+
+export function publishPortfolioDraft() {
+  const conn = database();
+  const source = conn.prepare("SELECT * FROM portfolio_snapshots WHERE status = 'draft'").get() as PortfolioSnapshotRow;
+  const draft = normalizePortfolioDraft(readPortfolioSnapshot(conn, source));
+  const snapshotId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  conn.exec("BEGIN");
+  try {
+    conn.prepare(`
+      INSERT INTO portfolio_snapshots (
+        id, status, title, subtitle, ownerName, avatarUrl, createdAt, updatedAt, publishedAt
+      ) VALUES (?, 'published', ?, ?, ?, ?, ?, ?, ?)
+    `).run(snapshotId, draft.title, draft.subtitle, draft.ownerName, draft.avatarUrl || null, now, now, now);
+    const insertPosition = conn.prepare(`
+      INSERT INTO portfolio_positions (
+        id, snapshotId, positionKey, symbol, name, assetType, market, sector, currency,
+        quantity, averageCost, lastPrice, logoUrl, sortOrder
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const position of draft.positions) {
+      insertPosition.run(
+        crypto.randomUUID(), snapshotId, position.positionKey, position.symbol, position.name, position.assetType,
+        position.market, position.sector, position.currency, position.quantity, position.averageCost,
+        position.lastPrice, position.logoUrl || null, position.sortOrder
+      );
+    }
+    const insertCash = conn.prepare("INSERT INTO portfolio_cash_balances (id, snapshotId, currency, balance) VALUES (?, ?, ?, ?)");
+    for (const cash of draft.cashBalances) insertCash.run(crypto.randomUUID(), snapshotId, cash.currency, cash.balance);
+    const insertFx = conn.prepare("INSERT INTO portfolio_fx_rates (id, snapshotId, currency, rateToCny) VALUES (?, ?, ?, ?)");
+    for (const fx of draft.fxRates) insertFx.run(crypto.randomUUID(), snapshotId, fx.currency, fx.rateToCny);
+    conn.exec("COMMIT");
+  } catch (error) {
+    conn.exec("ROLLBACK");
+    throw error;
+  }
+  return getPortfolio("admin");
+}
+
+function sectorColor(name: string) {
+  let hash = 0;
+  for (const character of name) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  return portfolioSectorColors[Math.abs(hash) % portfolioSectorColors.length]!;
+}
+
+export function getPortfolio(accessLevel: PortfolioAccessLevel): PortfolioResponse {
+  const conn = database();
+  const [currentRow, previousRow] = latestPortfolioRows(conn);
+  if (!currentRow?.publishedAt) return { accessLevel, portfolio: null };
+  const current = readPortfolioSnapshot(conn, currentRow);
+  const previous = previousRow ? readPortfolioSnapshot(conn, previousRow) : null;
+  const previousQuantities = new Map(previous?.positions.map((position) => [position.positionKey, position.quantity]) || []);
+  const fxRates = new Map(current.fxRates.map((fx) => [fx.currency, fx.rateToCny]));
+  const canViewSensitive = accessLevel !== "public";
+  const positionMetrics = current.positions.map((position) => {
+    const fx = fxRates.get(position.currency) || 1;
+    const marketValueCny = position.quantity * position.lastPrice * fx;
+    const costValueCny = position.quantity * position.averageCost * fx;
+    const unrealizedPnlCny = marketValueCny - costValueCny;
+    return { position, marketValueCny, costValueCny, unrealizedPnlCny };
+  });
+  const stockMarketValueCny = positionMetrics.reduce((sum, item) => sum + item.marketValueCny, 0);
+  const stockCostValueCny = positionMetrics.reduce((sum, item) => sum + item.costValueCny, 0);
+  const cashMetrics = current.cashBalances.map((cash) => ({
+    ...cash,
+    marketValueCny: cash.balance * (fxRates.get(cash.currency) || 1)
+  }));
+  const cashMarketValueCny = cashMetrics.reduce((sum, item) => sum + item.marketValueCny, 0);
+  const totalAssetsCny = stockMarketValueCny + cashMarketValueCny;
+  const unrealizedPnlCny = positionMetrics.reduce((sum, item) => sum + item.unrealizedPnlCny, 0);
+  const positions: PortfolioPositionView[] = positionMetrics.map(({ position, marketValueCny, costValueCny, unrealizedPnlCny }) => ({
+    positionKey: position.positionKey,
+    symbol: position.symbol,
+    name: position.name,
+    assetType: position.assetType,
+    market: position.market,
+    sector: position.sector,
+    currency: position.currency,
+    lastPrice: position.lastPrice,
+    logoUrl: position.logoUrl,
+    sortOrder: position.sortOrder,
+    weightPercent: totalAssetsCny > 0 ? marketValueCny / totalAssetsCny * 100 : 0,
+    returnPercent: costValueCny > 0 ? unrealizedPnlCny / costValueCny * 100 : null,
+    ...(canViewSensitive ? {
+      quantity: position.quantity,
+      averageCost: position.averageCost,
+      marketValueCny,
+      unrealizedPnlCny,
+      quantityChange: previous ? position.quantity - (previousQuantities.get(position.positionKey) || 0) : 0
+    } : {})
+  }));
+  const sectorMap = new Map<string, { marketValueCny: number; positionCount: number }>();
+  for (const item of positionMetrics) {
+    const aggregate = sectorMap.get(item.position.sector) || { marketValueCny: 0, positionCount: 0 };
+    aggregate.marketValueCny += item.marketValueCny;
+    aggregate.positionCount += 1;
+    sectorMap.set(item.position.sector, aggregate);
+  }
+  const sectors: PortfolioSectorView[] = [...sectorMap.entries()]
+    .map(([name, aggregate]) => ({
+      name,
+      color: sectorColor(name),
+      weightPercent: totalAssetsCny > 0 ? aggregate.marketValueCny / totalAssetsCny * 100 : 0,
+      positionCount: aggregate.positionCount,
+      ...(canViewSensitive ? { marketValueCny: aggregate.marketValueCny } : {})
+    }))
+    .sort((left, right) => right.weightPercent - left.weightPercent);
+  const cash: PortfolioCashView[] = cashMetrics
+    .filter((item) => item.balance > 0)
+    .map((item) => ({
+      currency: item.currency,
+      weightPercent: totalAssetsCny > 0 ? item.marketValueCny / totalAssetsCny * 100 : 0,
+      ...(canViewSensitive ? { balance: item.balance, marketValueCny: item.marketValueCny } : {})
+    }));
+  const portfolio: PortfolioView = {
+    snapshotId: current.id,
+    title: current.title,
+    subtitle: current.subtitle,
+    ownerName: current.ownerName,
+    avatarUrl: current.avatarUrl,
+    publishedAt: currentRow.publishedAt,
+    summary: {
+      unrealizedReturnPercent: stockCostValueCny > 0 ? unrealizedPnlCny / stockCostValueCny * 100 : null,
+      stockWeightPercent: totalAssetsCny > 0 ? stockMarketValueCny / totalAssetsCny * 100 : 0,
+      cashWeightPercent: totalAssetsCny > 0 ? cashMarketValueCny / totalAssetsCny * 100 : 0,
+      holdingCount: positions.length,
+      sectorCount: sectors.length,
+      ...(canViewSensitive ? { totalAssetsCny, stockMarketValueCny, cashMarketValueCny, unrealizedPnlCny } : {})
+    },
+    positions,
+    sectors,
+    cash
+  };
+  return { accessLevel, portfolio };
 }

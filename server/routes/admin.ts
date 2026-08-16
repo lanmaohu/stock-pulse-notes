@@ -1,0 +1,136 @@
+import { Router, type Response } from "express";
+import type {
+  CollectionRunsResponse,
+  CollectionSettingsResponse,
+  CreatorSearchResponse,
+  CreatorsResponse,
+  PlatformAccountsResponse
+} from "../../shared/types.js";
+import { requireAdmin } from "../auth.js";
+import { createBilibiliQrSession, pollBilibiliQrSession } from "../bilibili-auth.js";
+import {
+  checkPlatformAccount,
+  enqueueCollection,
+  searchPlatformCreators,
+  subscribeCreator,
+  updateCreatorSubscription
+} from "../collector.js";
+import { deletePlatformAccount, listCreators, listPlatformAccounts } from "../repositories/platform.js";
+import { getCollectionRun, getCollectionSettings, listCollectionRuns, updateCollectionSettings } from "../repositories/collection.js";
+import { HttpError } from "../http-error.js";
+import { platformValue, routeParam } from "../validation.js";
+
+export const adminRouter = Router();
+const protectedPrefixes = ["/platform-accounts", "/creators", "/collection-runs", "/collection-settings"];
+adminRouter.use((req, res, next) => {
+  if (protectedPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
+    return requireAdmin(req, res, next);
+  }
+  next();
+});
+
+adminRouter.get("/platform-accounts", (_req, res: Response<PlatformAccountsResponse>) => {
+  res.json({ accounts: listPlatformAccounts() });
+});
+
+adminRouter.post("/platform-accounts/bilibili/qr", async (_req, res, next) => {
+  try {
+    res.status(201).json(await createBilibiliQrSession());
+  } catch (error) {
+    next(new HttpError(502, error instanceof Error ? error.message : "无法生成 B 站登录二维码。", "PLATFORM_QR_FAILED"));
+  }
+});
+
+adminRouter.get("/platform-accounts/bilibili/qr/:sessionId", async (req, res, next) => {
+  try {
+    res.json(await pollBilibiliQrSession(routeParam(req, "sessionId")));
+  } catch (error) {
+    next(new HttpError(404, error instanceof Error ? error.message : "二维码会话不存在。", "QR_SESSION_NOT_FOUND"));
+  }
+});
+
+adminRouter.post("/platform-accounts/:id/check", async (req, res, next) => {
+  const account = listPlatformAccounts().find((item) => item.id === routeParam(req, "id"));
+  if (!account) throw new HttpError(404, "平台账号不存在。", "PLATFORM_ACCOUNT_NOT_FOUND");
+  try {
+    res.json(await checkPlatformAccount(account.platform));
+  } catch (error) {
+    next(new HttpError(502, error instanceof Error ? error.message : "平台账号检查失败。", "PLATFORM_CHECK_FAILED"));
+  }
+});
+
+adminRouter.delete("/platform-accounts/:id", (req, res) => {
+  if (!deletePlatformAccount(routeParam(req, "id"))) {
+    throw new HttpError(404, "平台账号不存在。", "PLATFORM_ACCOUNT_NOT_FOUND");
+  }
+  res.status(204).end();
+});
+
+adminRouter.get("/creators", (_req, res: Response<CreatorsResponse>) => {
+  res.json({ creators: listCreators() });
+});
+
+adminRouter.get("/creators/search", async (req, res: Response<CreatorSearchResponse>, next) => {
+  try {
+    const platform = platformValue(req.query.platform);
+    const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 120) : "";
+    if (!query) throw new HttpError(400, "请输入博主名称、UID 或主页链接。", "INVALID_CREATOR_QUERY");
+    res.json({ candidates: await searchPlatformCreators(platform, query) });
+  } catch (error) {
+    next(error instanceof HttpError ? error : new HttpError(502, error instanceof Error ? error.message : "博主搜索失败。", "CREATOR_SEARCH_FAILED"));
+  }
+});
+
+adminRouter.post("/creators", async (req, res, next) => {
+  try {
+    const platform = platformValue(req.body?.platform);
+    const externalId = typeof req.body?.externalId === "string" ? req.body.externalId.trim().slice(0, 80) : "";
+    if (!externalId) throw new HttpError(400, "缺少博主账号。", "INVALID_CREATOR");
+    res.status(201).json(await subscribeCreator(platform, externalId));
+  } catch (error) {
+    next(error instanceof HttpError ? error : new HttpError(502, error instanceof Error ? error.message : "添加博主失败。", "CREATOR_SUBSCRIBE_FAILED"));
+  }
+});
+
+adminRouter.patch("/creators/:id", (req, res) => {
+  if (typeof req.body?.enabled !== "boolean") throw new HttpError(400, "enabled must be boolean.", "INVALID_CREATOR_STATE");
+  const creator = updateCreatorSubscription(routeParam(req, "id"), req.body.enabled);
+  if (!creator) throw new HttpError(404, "博主不存在。", "CREATOR_NOT_FOUND");
+  res.json(creator);
+});
+
+adminRouter.post("/collection-runs", (req, res) => {
+  const creatorIds = Array.isArray(req.body?.creatorIds)
+    ? req.body.creatorIds.filter((id: unknown): id is string => typeof id === "string").slice(0, 100)
+    : undefined;
+  try {
+    res.status(202).json(enqueueCollection("manual", creatorIds));
+  } catch (error) {
+    throw new HttpError(400, error instanceof Error ? error.message : "无法创建采集任务。", "COLLECTION_ENQUEUE_FAILED");
+  }
+});
+
+adminRouter.get("/collection-runs", (_req, res: Response<CollectionRunsResponse>) => {
+  res.json({ runs: listCollectionRuns() });
+});
+
+adminRouter.get("/collection-runs/:id", (req, res) => {
+  const run = getCollectionRun(routeParam(req, "id"));
+  if (!run) throw new HttpError(404, "采集任务不存在。", "COLLECTION_RUN_NOT_FOUND");
+  res.json(run);
+});
+
+adminRouter.get("/collection-settings", (_req, res: Response<CollectionSettingsResponse>) => {
+  res.json({ settings: getCollectionSettings() });
+});
+
+adminRouter.put("/collection-settings", (req, res: Response<CollectionSettingsResponse>) => {
+  const enabled = typeof req.body?.enabled === "boolean" ? req.body.enabled : null;
+  const localTime = typeof req.body?.localTime === "string" ? req.body.localTime : "";
+  const maxVideosPerCreator = Number(req.body?.maxVideosPerCreator);
+  const timeMatch = localTime.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  if (enabled === null || !timeMatch || !Number.isInteger(maxVideosPerCreator) || maxVideosPerCreator < 1 || maxVideosPerCreator > 20) {
+    throw new HttpError(400, "采集设置格式不正确。", "INVALID_COLLECTION_SETTINGS");
+  }
+  res.json({ settings: updateCollectionSettings({ enabled, localTime, maxVideosPerCreator }) });
+});

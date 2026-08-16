@@ -1,31 +1,34 @@
+import crypto from "node:crypto";
 import type { CollectionRunTrigger, Platform } from "../shared/types.js";
 import { analyzeContentStockViews } from "./ai.js";
 import { decryptCredential } from "./credentials.js";
 import {
+  claimNextQueuedCollectionRun,
   createCollectionRun,
   finishCollectionRun,
   finishCollectionRunItem,
   getCollectionRun,
   getCollectionSettings,
+  recoverInterruptedCollectionRuns,
+  renewCollectionRunLease,
+  startCollectionRunItem
+} from "./repositories/collection.js";
+import {
   getCreator,
-  getNextQueuedCollectionRun,
   getPlatformAccountWithCredential,
   listCreators,
-  markContentAnalysisStatus,
-  recoverInterruptedCollectionRuns,
-  saveContentStockViews,
   setCreatorEnabled,
-  startCollectionRun,
-  startCollectionRunItem,
   updateCreatorCollection,
   updatePlatformAccountStatus,
-  upsertContent,
   upsertCreator
-} from "./db.js";
+} from "./repositories/platform.js";
+import { markContentAnalysisStatus, saveContentStockViews, upsertContent } from "./repositories/content.js";
 import { platformAdapter } from "./platforms/index.js";
 import { PlatformError } from "./platforms/types.js";
 
 let workerRunning = false;
+const workerId = crypto.randomUUID();
+const leaseDurationMs = 5 * 60 * 1000;
 
 function sleep(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -85,7 +88,6 @@ export async function subscribeCreator(platform: Platform, externalId: string) {
   const candidate = await platformAdapter(platform).resolveCreator(externalId, credential);
   const creator = upsertCreator(candidate);
   const { run } = createCollectionRun("subscription", [creator]);
-  wakeCollectionWorker();
   return { creator, run };
 }
 
@@ -99,9 +101,6 @@ export function enqueueCollection(trigger: CollectionRunTrigger, creatorIds?: st
     throw new Error("还没有启用的博主，请先添加博主。");
   }
   const result = createCollectionRun(trigger, creators, scheduledFor);
-  if (result.created) {
-    wakeCollectionWorker();
-  }
   return result.run;
 }
 
@@ -193,13 +192,12 @@ async function processQueue() {
   }
   workerRunning = true;
   try {
-    let queued = getNextQueuedCollectionRun();
-    while (queued) {
-      const run = startCollectionRun(queued.id);
-      if (!run) {
-        queued = getNextQueuedCollectionRun();
-        continue;
-      }
+    let run = claimNextQueuedCollectionRun(workerId, Date.now() + leaseDurationMs);
+    while (run) {
+      const heartbeat = setInterval(() => {
+        renewCollectionRunLease(run!.id, workerId, Date.now() + leaseDurationMs);
+      }, 30_000);
+      heartbeat.unref();
       try {
         for (const item of run.items) {
           if (item.status !== "queued") {
@@ -213,8 +211,10 @@ async function processQueue() {
         finishCollectionRun(run.id);
       } catch (error) {
         finishCollectionRun(run.id, error instanceof Error ? error.message : "采集任务意外中断。");
+      } finally {
+        clearInterval(heartbeat);
       }
-      queued = getNextQueuedCollectionRun();
+      run = claimNextQueuedCollectionRun(workerId, Date.now() + leaseDurationMs);
     }
   } finally {
     workerRunning = false;
@@ -223,11 +223,13 @@ async function processQueue() {
 
 export function wakeCollectionWorker() {
   void processQueue().catch((error) => {
-    console.error("Collection worker failed", error instanceof Error ? error.message : error);
+    console.error(JSON.stringify({ level: "error", event: "collection_worker_failed", message: error instanceof Error ? error.message : String(error) }));
   });
 }
 
 export function startCollectionWorker() {
   recoverInterruptedCollectionRuns();
   wakeCollectionWorker();
+  const timer = setInterval(wakeCollectionWorker, 1_000);
+  return () => clearInterval(timer);
 }

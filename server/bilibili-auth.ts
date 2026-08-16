@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import QRCode from "qrcode";
 import type { BilibiliQrSession, PlatformAccount } from "../shared/types.js";
+import { fetchWithPolicy } from "./http-client.js";
 import { assertCredentialEncryptionConfigured, encryptCredential } from "./credentials.js";
-import { upsertPlatformAccount } from "./db.js";
+import { upsertPlatformAccount } from "./repositories/platform.js";
 import { checkBilibiliAccount } from "./platforms/bilibili.js";
 
 interface QrState {
@@ -52,9 +53,9 @@ function cleanSessions() {
 export async function createBilibiliQrSession(): Promise<BilibiliQrSession> {
   assertCredentialEncryptionConfigured();
   cleanSessions();
-  const response = await fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/generate", {
+  const response = await fetchWithPolicy("https://passport.bilibili.com/x/passport-login/web/qrcode/generate", {
     headers: passportHeaders
-  });
+  }, { timeoutMs: 10_000, retries: 0 });
   if (!response.ok) {
     throw new Error(`生成 B 站二维码失败（${response.status}）。`);
   }
@@ -99,7 +100,7 @@ function cookieParts(response: Response, loginUrl: string) {
 
 async function appendDeviceCookies(values: Map<string, string>) {
   try {
-    const response = await fetch("https://api.bilibili.com/x/frontend/finger/spi", { headers: passportHeaders });
+    const response = await fetchWithPolicy("https://api.bilibili.com/x/frontend/finger/spi", { headers: passportHeaders }, { timeoutMs: 10_000, retries: 1 });
     const body = (await response.json()) as PassportResponse<{ b_3?: string; b_4?: string }>;
     if (body.code === 0) {
       if (body.data?.b_3) values.set("buvid3", body.data.b_3);
@@ -126,7 +127,7 @@ export async function pollBilibiliQrSession(sessionId: string): Promise<Bilibili
   const url = new URL("https://passport.bilibili.com/x/passport-login/web/qrcode/poll");
   url.searchParams.set("qrcode_key", state.qrcodeKey);
   try {
-    const response = await fetch(url, { headers: passportHeaders, redirect: "manual" });
+    const response = await fetchWithPolicy(url, { headers: passportHeaders, redirect: "manual" }, { timeoutMs: 10_000, retries: 1 });
     if (!response.ok) {
       throw new Error(`确认 B 站扫码状态失败（${response.status}）。`);
     }

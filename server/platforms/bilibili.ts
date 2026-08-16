@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Creator, CreatorCandidate } from "../../shared/types.js";
+import { fetchWithPolicy } from "../http-client.js";
 import { PlatformError, type CollectedContent, type PlatformAdapter, type PlatformAccountIdentity } from "./types.js";
 
 interface BilibiliEnvelope<T> {
@@ -85,7 +86,7 @@ function platformError(status: number, message = "") {
 }
 
 async function bilibiliJson<T>(url: string, credential: string): Promise<T> {
-  const response = await fetch(url, { headers: headers(credential) });
+  const response = await fetchWithPolicy(url, { headers: headers(credential) }, { timeoutMs: 12_000, retries: 1 });
   if (!response.ok) {
     throw platformError(response.status);
   }
@@ -225,7 +226,7 @@ async function subtitleText(bvid: string, cid: string, credential: string) {
     return "";
   }
   const subtitleUrl = rawUrl.startsWith("//") ? `https:${rawUrl}` : rawUrl;
-  const response = await fetch(subtitleUrl, { headers: headers(credential) });
+  const response = await fetchWithPolicy(subtitleUrl, { headers: headers(credential) }, { timeoutMs: 12_000, retries: 1 });
   if (!response.ok) {
     throw new PlatformError("transcript_unavailable", `字幕读取失败（${response.status}）。`);
   }

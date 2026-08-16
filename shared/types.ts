@@ -81,6 +81,12 @@ export interface Creator {
   updatedAt: string;
 }
 
+export interface ContentCreatorOption {
+  id: string;
+  name: string;
+  platform: Platform;
+}
+
 export interface CreatorCandidate {
   platform: Platform;
   externalId: string;
@@ -192,6 +198,122 @@ export interface CollectionSettings {
   updatedAt: string;
 }
 
+export type PortfolioAccessLevel = "public" | "viewer" | "admin";
+export type PortfolioCurrency = "CNY" | "HKD" | "USD";
+export type PortfolioAssetType = "stock" | "etf";
+
+export interface PortfolioFxRate {
+  currency: PortfolioCurrency;
+  rateToCny: number;
+}
+
+export interface PortfolioCashBalance {
+  currency: PortfolioCurrency;
+  balance: number;
+}
+
+export interface PortfolioDraftPosition {
+  positionKey: string;
+  symbol: string;
+  name: string;
+  assetType: PortfolioAssetType;
+  market: string;
+  sector: string;
+  currency: PortfolioCurrency;
+  quantity: number;
+  averageCost: number;
+  lastPrice: number;
+  logoUrl?: string;
+  sortOrder: number;
+}
+
+export interface PortfolioDraft {
+  id: string;
+  title: string;
+  subtitle: string;
+  ownerName: string;
+  avatarUrl?: string;
+  positions: PortfolioDraftPosition[];
+  cashBalances: PortfolioCashBalance[];
+  fxRates: PortfolioFxRate[];
+  updatedAt: string;
+}
+
+export interface PortfolioPositionView {
+  positionKey: string;
+  symbol: string;
+  name: string;
+  assetType: PortfolioAssetType;
+  market: string;
+  sector: string;
+  currency: PortfolioCurrency;
+  lastPrice: number;
+  logoUrl?: string;
+  sortOrder: number;
+  weightPercent: number;
+  returnPercent: number | null;
+  quantity?: number;
+  averageCost?: number;
+  marketValueCny?: number;
+  unrealizedPnlCny?: number;
+  quantityChange?: number;
+}
+
+export interface PortfolioSectorView {
+  name: string;
+  color: string;
+  weightPercent: number;
+  positionCount: number;
+  marketValueCny?: number;
+}
+
+export interface PortfolioCashView {
+  currency: PortfolioCurrency;
+  weightPercent: number;
+  balance?: number;
+  marketValueCny?: number;
+}
+
+export interface PortfolioSummary {
+  unrealizedReturnPercent: number | null;
+  stockWeightPercent: number;
+  cashWeightPercent: number;
+  holdingCount: number;
+  sectorCount: number;
+  totalAssetsCny?: number;
+  stockMarketValueCny?: number;
+  cashMarketValueCny?: number;
+  unrealizedPnlCny?: number;
+}
+
+export interface PortfolioView {
+  snapshotId: string;
+  title: string;
+  subtitle: string;
+  ownerName: string;
+  avatarUrl?: string;
+  publishedAt: string;
+  summary: PortfolioSummary;
+  positions: PortfolioPositionView[];
+  sectors: PortfolioSectorView[];
+  cash: PortfolioCashView[];
+}
+
+export interface PortfolioResponse {
+  accessLevel: PortfolioAccessLevel;
+  portfolio: PortfolioView | null;
+}
+
+export interface PortfolioSessionResponse {
+  accessLevel: PortfolioAccessLevel;
+}
+
+export interface PortfolioDraftResponse {
+  draft: PortfolioDraft;
+  dirty: boolean;
+  latestPublishedAt?: string;
+}
+
 export type BilibiliQrStatus = "waiting" | "scanned" | "confirmed" | "expired" | "error";
 
 export interface BilibiliQrSession {
@@ -278,8 +400,29 @@ export interface CreatorsResponse {
   creators: Creator[];
 }
 
+export interface ContentCreatorOptionsResponse {
+  creators: ContentCreatorOption[];
+}
+
+export type ContentInsightsPageSize = 10 | 20 | 50;
+
+export interface ContentInsightsPagination {
+  page: number;
+  pageSize: ContentInsightsPageSize;
+  totalItems: number;
+  totalPages: number;
+}
+
+export interface ContentInsightsSummary {
+  contentCount: number;
+  viewCount: number;
+  targetCount: number;
+}
+
 export interface ContentInsightsResponse {
   insights: ContentInsight[];
+  pagination: ContentInsightsPagination;
+  summary: ContentInsightsSummary;
   nextCursor?: string;
 }
 
@@ -325,7 +468,7 @@ export interface BilibiliCollectResponse {
 }
 
 export interface HealthResponse {
-  ok: true;
+  ok: boolean;
   service: "stockpulse";
   storage: "sqlite";
 }

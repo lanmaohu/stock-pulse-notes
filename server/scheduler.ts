@@ -1,5 +1,5 @@
 import { enqueueCollection } from "./collector.js";
-import { getCollectionSettings } from "./db.js";
+import { getCollectionSettings } from "./repositories/collection.js";
 
 function shanghaiParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -41,5 +41,7 @@ export function startCollectionScheduler() {
   };
 
   tick();
-  setInterval(tick, 30 * 1000).unref();
+  const timer = setInterval(tick, 30 * 1000);
+  timer.unref();
+  return () => clearInterval(timer);
 }

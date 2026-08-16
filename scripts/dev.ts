@@ -1,7 +1,11 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+
+const migration = spawnSync("npm", ["run", "migrate"], { stdio: "inherit", shell: process.platform === "win32" });
+if (migration.status !== 0) process.exit(migration.status || 1);
 
 const commands = [
-  ["npm", ["run", "dev:server"]],
+  ["npm", ["run", "dev:api"]],
+  ["npm", ["run", "dev:worker"]],
   ["npm", ["run", "dev:client"]]
 ] as const;
 

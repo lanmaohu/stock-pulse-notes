@@ -6,31 +6,45 @@
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "dev:client": "vite",
-    "dev:server": "tsx watch server/index.ts",
-    "build": "tsc -p tsconfig.server.json && vite build",
-    "test": "tsx --test server/*.test.ts",
+    "dev:api": "tsx watch server/index.ts",
+    "dev:server": "npm run dev:api",
+    "dev:worker": "tsx watch server/worker.ts",
+    "migrate": "tsx server/migrate.ts",
+    "build": "node scripts/clean-server-build.mjs && tsc -p tsconfig.server.json && vite build",
+    "test": "npm run test:server && npm run test:frontend",
+    "test:server": "tsx --test server/*.test.ts",
+    "test:frontend": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist-server/server/index.js"
+    "start": "npm run start:api",
+    "start:api": "node dist-server/server/index.js",
+    "start:worker": "node dist-server/server/worker.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "d3-hierarchy": "^3.1.2",
     "express": "^4.21.2",
     "lucide-react": "^0.468.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-router-dom": "^7.8.0",
     "vite": "^6.0.5"
   },
   "devDependencies": {
+    "@types/d3-hierarchy": "^3.1.7",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "jsdom": "^26.1.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5 <23"
   }
 }

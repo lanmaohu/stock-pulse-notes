@@ -9,5 +9,5 @@
     "rootDir": "."
   },
   "include": ["server", "shared"],
-  "exclude": ["dist", "dist-server", "node_modules"]
+  "exclude": ["dist", "dist-server", "node_modules", "server/**/*.test.ts"]
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, test } from "node:test";
+import { after, before, test } from "node:test";
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stockpulse-auth-test-"));
 process.env.STOCKPULSE_DB_PATH = path.join(directory, "stockpulse.sqlite");
@@ -56,6 +56,10 @@ globalThis.fetch = async (input) => {
 const auth = await import("./bilibili-auth.js");
 const db = await import("./db.js");
 
+before(async () => {
+  await db.ensureDatabase();
+});
+
 after(() => {
   globalThis.fetch = originalFetch;
 });
@@ -80,7 +84,7 @@ test("confirmed QR login persists only a sanitized platform account", async () =
   nextPollCode = 0;
   const session = await auth.createBilibiliQrSession();
   const confirmed = await auth.pollBilibiliQrSession(session.sessionId);
-  assert.equal(confirmed.status, "confirmed");
+  assert.equal(confirmed.status, "confirmed", confirmed.error);
   assert.equal(confirmed.account?.displayName, "测试账号");
   assert.equal(Object.hasOwn(confirmed.account || {}, "credentialsCiphertext"), false);
 

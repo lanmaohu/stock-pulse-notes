@@ -61,8 +61,19 @@ const userAgent =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 let wbiCache: { key: string; expiresAt: number } | null = null;
 
-function sleep(milliseconds: number) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function sleep(milliseconds: number, signal?: AbortSignal) {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function headers(credential: string) {
@@ -85,8 +96,8 @@ function platformError(status: number, message = "") {
   return new PlatformError("platform_error", message || `B 站请求失败（${status}）。`);
 }
 
-async function bilibiliJson<T>(url: string, credential: string): Promise<T> {
-  const response = await fetchWithPolicy(url, { headers: headers(credential) }, { timeoutMs: 12_000, retries: 1 });
+async function bilibiliJson<T>(url: string, credential: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetchWithPolicy(url, { headers: headers(credential), signal }, { timeoutMs: 12_000, retries: 1 });
   if (!response.ok) {
     throw platformError(response.status);
   }
@@ -108,11 +119,11 @@ function imageKey(url: string | undefined) {
   return match?.[1] || "";
 }
 
-async function wbiKey(credential: string) {
+async function wbiKey(credential: string, signal?: AbortSignal) {
   if (wbiCache && wbiCache.expiresAt > Date.now()) {
     return wbiCache.key;
   }
-  const nav = await bilibiliJson<NavData>("https://api.bilibili.com/x/web-interface/nav", credential);
+  const nav = await bilibiliJson<NavData>("https://api.bilibili.com/x/web-interface/nav", credential, signal);
   const source = `${imageKey(nav.wbi_img?.img_url)}${imageKey(nav.wbi_img?.sub_url)}`;
   if (!source) {
     throw new PlatformError("platform_error", "无法获取 B 站请求签名。");
@@ -122,8 +133,8 @@ async function wbiKey(credential: string) {
   return key;
 }
 
-async function signedUrl(base: string, params: Record<string, string | number>, credential: string) {
-  const key = await wbiKey(credential);
+async function signedUrl(base: string, params: Record<string, string | number>, credential: string, signal?: AbortSignal) {
+  const key = await wbiKey(credential, signal);
   const wts = Math.floor(Date.now() / 1000);
   const safeEntries = Object.entries({ ...params, wts })
     .map(([name, value]) => [name, String(value).replace(/[!'()*]/g, "")] as const)
@@ -135,8 +146,8 @@ async function signedUrl(base: string, params: Record<string, string | number>, 
   return `${base}?${query}&w_rid=${wRid}`;
 }
 
-export async function checkBilibiliAccount(credential: string): Promise<PlatformAccountIdentity> {
-  const nav = await bilibiliJson<NavData>("https://api.bilibili.com/x/web-interface/nav", credential);
+export async function checkBilibiliAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity> {
+  const nav = await bilibiliJson<NavData>("https://api.bilibili.com/x/web-interface/nav", credential, signal);
   if (!nav.isLogin || !nav.mid) {
     throw new PlatformError("auth_required", "B 站登录状态已失效，请重新扫码绑定。");
   }
@@ -147,13 +158,13 @@ export async function checkBilibiliAccount(credential: string): Promise<Platform
   };
 }
 
-async function resolveCreator(externalId: string, credential: string): Promise<CreatorCandidate> {
+async function resolveCreator(externalId: string, credential: string, signal?: AbortSignal): Promise<CreatorCandidate> {
   const mid = externalId.trim();
   if (!/^\d+$/.test(mid)) {
     throw new PlatformError("creator_not_found", "B 站 UID 格式不正确。");
   }
-  const url = await signedUrl("https://api.bilibili.com/x/space/wbi/acc/info", { mid }, credential);
-  const data = await bilibiliJson<{ mid?: number; name?: string; face?: string }>(url, credential).catch((error) => {
+  const url = await signedUrl("https://api.bilibili.com/x/space/wbi/acc/info", { mid }, credential, signal);
+  const data = await bilibiliJson<{ mid?: number; name?: string; face?: string }>(url, credential, signal).catch((error) => {
     if (error instanceof PlatformError && error.code === "platform_error") {
       throw new PlatformError("creator_not_found", "没有找到这个 B 站博主。");
     }
@@ -180,15 +191,15 @@ function creatorIdFromQuery(query: string) {
   return /^\d+$/.test(trimmed) ? trimmed : "";
 }
 
-async function searchCreators(query: string, credential: string): Promise<CreatorCandidate[]> {
+async function searchCreators(query: string, credential: string, signal?: AbortSignal): Promise<CreatorCandidate[]> {
   const exactId = creatorIdFromQuery(query);
   if (exactId) {
-    return [await resolveCreator(exactId, credential)];
+    return [await resolveCreator(exactId, credential, signal)];
   }
   const url = new URL("https://api.bilibili.com/x/web-interface/search/type");
   url.searchParams.set("search_type", "bili_user");
   url.searchParams.set("keyword", query.trim());
-  const data = await bilibiliJson<{ result?: CreatorSearchItem[] }>(url.toString(), credential);
+  const data = await bilibiliJson<{ result?: CreatorSearchItem[] }>(url.toString(), credential, signal);
   return (data.result || [])
     .filter((item) => item.mid && item.uname)
     .slice(0, 8)
@@ -202,31 +213,32 @@ async function searchCreators(query: string, credential: string): Promise<Creato
     }));
 }
 
-async function creatorVideos(mid: string, limit: number, credential: string) {
+async function creatorVideos(mid: string, limit: number, credential: string, signal?: AbortSignal) {
   const url = await signedUrl(
     "https://api.bilibili.com/x/space/wbi/arc/search",
     { mid, pn: 1, ps: limit, order: "pubdate" },
-    credential
+    credential,
+    signal
   );
-  const data = await bilibiliJson<{ list?: { vlist?: SpaceVideoItem[] } }>(url, credential);
+  const data = await bilibiliJson<{ list?: { vlist?: SpaceVideoItem[] } }>(url, credential, signal);
   return (data.list?.vlist || []).filter((item) => item.bvid).slice(0, limit);
 }
 
-async function videoDetail(bvid: string, credential: string) {
+async function videoDetail(bvid: string, credential: string, signal?: AbortSignal) {
   const url = new URL("https://api.bilibili.com/x/web-interface/view");
   url.searchParams.set("bvid", bvid);
-  return bilibiliJson<VideoDetail>(url.toString(), credential);
+  return bilibiliJson<VideoDetail>(url.toString(), credential, signal);
 }
 
-async function subtitleText(bvid: string, cid: string, credential: string) {
-  const url = await signedUrl("https://api.bilibili.com/x/player/wbi/v2", { bvid, cid }, credential);
-  const data = await bilibiliJson<{ subtitle?: { subtitles?: SubtitleItem[] } }>(url, credential);
+async function subtitleText(bvid: string, cid: string, credential: string, signal?: AbortSignal) {
+  const url = await signedUrl("https://api.bilibili.com/x/player/wbi/v2", { bvid, cid }, credential, signal);
+  const data = await bilibiliJson<{ subtitle?: { subtitles?: SubtitleItem[] } }>(url, credential, signal);
   const rawUrl = data.subtitle?.subtitles?.find((item) => item.subtitle_url)?.subtitle_url;
   if (!rawUrl) {
     return "";
   }
   const subtitleUrl = rawUrl.startsWith("//") ? `https:${rawUrl}` : rawUrl;
-  const response = await fetchWithPolicy(subtitleUrl, { headers: headers(credential) }, { timeoutMs: 12_000, retries: 1 });
+  const response = await fetchWithPolicy(subtitleUrl, { headers: headers(credential), signal }, { timeoutMs: 12_000, retries: 1 });
   if (!response.ok) {
     throw new PlatformError("transcript_unavailable", `字幕读取失败（${response.status}）。`);
   }
@@ -247,17 +259,18 @@ function metadataTranscript(detail: VideoDetail, tags: string[]) {
     .trim();
 }
 
-async function collectVideo(item: SpaceVideoItem, credential: string): Promise<CollectedContent> {
+async function collectVideo(item: SpaceVideoItem, credential: string, signal?: AbortSignal): Promise<CollectedContent> {
   const bvid = item.bvid!;
-  const detail = await videoDetail(bvid, credential);
+  const detail = await videoDetail(bvid, credential, signal);
   const cid = String(detail.cid || detail.pages?.[0]?.cid || "");
   const tags = [detail.tname || ""].filter(Boolean);
   let transcript = "";
   let warning = "";
   if (cid) {
     try {
-      transcript = await subtitleText(bvid, cid, credential);
+      transcript = await subtitleText(bvid, cid, credential, signal);
     } catch (error) {
+      if (signal?.aborted) throw error;
       warning = error instanceof Error ? error.message : "字幕读取失败。";
     }
   }
@@ -280,13 +293,13 @@ async function collectVideo(item: SpaceVideoItem, credential: string): Promise<C
   };
 }
 
-async function listCreatorContent(creator: Creator, credential: string, limit: number) {
-  const items = await creatorVideos(creator.externalId, limit, credential);
+async function listCreatorContent(creator: Creator, credential: string, limit: number, signal?: AbortSignal) {
+  const items = await creatorVideos(creator.externalId, limit, credential, signal);
   const content: CollectedContent[] = [];
   for (const item of items) {
-    content.push(await collectVideo(item, credential));
+    content.push(await collectVideo(item, credential, signal));
     if (items.length > 1) {
-      await sleep(450);
+      await sleep(450, signal);
     }
   }
   return content;

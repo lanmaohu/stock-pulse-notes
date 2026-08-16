@@ -1,7 +1,7 @@
-import { enqueueCollection } from "./collector.js";
-import { getCollectionSettings } from "./repositories/collection.js";
+import { enqueueCollection as defaultEnqueueCollection } from "./collection/service.js";
+import { getCollectionSettings as defaultGetCollectionSettings } from "./repositories/collection.js";
 
-function shanghaiParts(date = new Date()) {
+export function shanghaiParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
@@ -12,36 +12,60 @@ function shanghaiParts(date = new Date()) {
     hourCycle: "h23"
   }).formatToParts(date);
   const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
-  return {
-    date: `${get("year")}-${get("month")}-${get("day")}`,
-    time: `${get("hour")}:${get("minute")}`
-  };
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, time: `${get("hour")}:${get("minute")}` };
 }
 
-export function startCollectionScheduler() {
+export interface CollectionSchedulerDependencies {
+  now?: () => Date;
+  getSettings?: typeof defaultGetCollectionSettings;
+  enqueue?: typeof defaultEnqueueCollection;
+  intervalMs?: number;
+}
+
+export function createCollectionScheduler(dependencies: CollectionSchedulerDependencies = {}) {
+  const now = dependencies.now || (() => new Date());
+  const getSettings = dependencies.getSettings || defaultGetCollectionSettings;
+  const enqueue = dependencies.enqueue || defaultEnqueueCollection;
   let lastAttemptKey = "";
+  let timer: ReturnType<typeof setInterval> | undefined;
+
   const tick = () => {
-    const settings = getCollectionSettings();
-    if (!settings.enabled) {
-      return;
-    }
-    const now = shanghaiParts();
-    const attemptKey = `${now.date}:${settings.localTime}`;
-    if (now.time < settings.localTime || lastAttemptKey === attemptKey) {
-      return;
-    }
-    lastAttemptKey = attemptKey;
+    const settings = getSettings();
+    if (!settings.enabled) return;
+    const current = shanghaiParts(now());
+    const attemptKey = `${current.date}:${settings.localTime}`;
+    if (current.time < settings.localTime || lastAttemptKey === attemptKey) return;
     try {
-      enqueueCollection("scheduled", undefined, now.date);
+      enqueue("scheduled", undefined, current.date);
+      lastAttemptKey = attemptKey;
     } catch (error) {
-      if (!(error instanceof Error && error.message.includes("还没有启用的博主"))) {
-        console.error("Scheduled collection failed", error instanceof Error ? error.message : error);
+      if (error instanceof Error && error.message.includes("还没有启用的博主")) {
+        lastAttemptKey = attemptKey;
+        return;
       }
+      console.error(JSON.stringify({
+        level: "error",
+        event: "scheduled_collection_failed",
+        message: error instanceof Error ? error.message : String(error)
+      }));
     }
   };
 
-  tick();
-  const timer = setInterval(tick, 30 * 1000);
-  timer.unref();
-  return () => clearInterval(timer);
+  const start = () => {
+    tick();
+    timer = setInterval(tick, dependencies.intervalMs ?? 30_000);
+    timer.unref();
+    return stop;
+  };
+
+  const stop = () => {
+    if (timer) clearInterval(timer);
+    timer = undefined;
+  };
+
+  return { start, stop, tick };
+}
+
+export function startCollectionScheduler(dependencies: CollectionSchedulerDependencies = {}) {
+  return createCollectionScheduler(dependencies).start();
 }

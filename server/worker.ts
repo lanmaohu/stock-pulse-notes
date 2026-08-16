@@ -1,6 +1,6 @@
 import { validateWorkerEnvironment } from "./config.js";
 import { startCollectionWorker } from "./collector.js";
-import { verifyDatabaseSchema } from "./db.js";
+import { verifyDatabaseSchema } from "./database/migrations.js";
 import { startCollectionScheduler } from "./scheduler.js";
 
 async function startWorker() {
@@ -8,13 +8,26 @@ async function startWorker() {
   await verifyDatabaseSchema();
   const stopWorker = startCollectionWorker();
   const stopScheduler = startCollectionScheduler();
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     stopScheduler();
-    stopWorker();
+    await stopWorker();
     console.log(JSON.stringify({ level: "info", event: "worker_stopping" }));
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  const requestShutdown = () => {
+    void shutdown().catch((error) => {
+      console.error(JSON.stringify({
+        level: "error",
+        event: "worker_shutdown_failed",
+        message: error instanceof Error ? error.message : String(error)
+      }));
+      process.exitCode = 1;
+    });
+  };
+  process.once("SIGINT", requestShutdown);
+  process.once("SIGTERM", requestShutdown);
   console.log(JSON.stringify({ level: "info", event: "worker_started" }));
 }
 

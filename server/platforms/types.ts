@@ -40,10 +40,10 @@ export interface CollectedContent {
 
 export interface PlatformAdapter {
   platform: Platform;
-  checkAccount(credential: string): Promise<PlatformAccountIdentity>;
-  searchCreators(query: string, credential: string): Promise<CreatorCandidate[]>;
-  resolveCreator(externalId: string, credential: string): Promise<CreatorCandidate>;
-  listCreatorContent(creator: Creator, credential: string, limit: number): Promise<CollectedContent[]>;
+  checkAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity>;
+  searchCreators(query: string, credential: string, signal?: AbortSignal): Promise<CreatorCandidate[]>;
+  resolveCreator(externalId: string, credential: string, signal?: AbortSignal): Promise<CreatorCandidate>;
+  listCreatorContent(creator: Creator, credential: string, limit: number, signal?: AbortSignal): Promise<CollectedContent[]>;
 }
 
 export interface StoredPlatformAccount extends PlatformAccount {

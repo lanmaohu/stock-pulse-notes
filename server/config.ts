@@ -2,6 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { assertCredentialEncryptionConfigured } from "./credentials.js";
 
+export const deepSeekModel = "deepseek-v4-pro" as const;
+
+export interface AiConfig {
+  provider: "deepseek";
+  model: typeof deepSeekModel;
+  endpoint: "https://api.deepseek.com/chat/completions";
+  timeoutMs: number;
+  maxOutputTokens: number;
+}
+
 let loaded = false;
 
 export function loadEnvironment() {
@@ -48,6 +58,23 @@ export function databasePath() {
   return path.resolve(configured || path.join(process.cwd(), "data", "stockpulse.sqlite"));
 }
 
+export function aiConfig(): AiConfig {
+  const configuredModel = process.env.AI_MODEL?.trim() || deepSeekModel;
+  if (configuredModel !== deepSeekModel) {
+    const legacyHint = configuredModel === "deepseek-chat" || configuredModel === "deepseek-reasoner"
+      ? " Legacy DeepSeek model aliases are no longer supported."
+      : "";
+    throw new Error(`AI_MODEL must be ${deepSeekModel}.${legacyHint}`);
+  }
+  return {
+    provider: "deepseek",
+    model: deepSeekModel,
+    endpoint: "https://api.deepseek.com/chat/completions",
+    timeoutMs: 90_000,
+    maxOutputTokens: 6_000
+  };
+}
+
 function validateSharedSecrets() {
   requiredSecret("SESSION_SECRET");
   requiredSecret("PORTFOLIO_VIEW_PASSWORD");
@@ -66,4 +93,5 @@ export function validateApiEnvironment() {
 export function validateWorkerEnvironment() {
   validateSharedSecrets();
   requiredSecret("DEEPSEEK_API_KEY");
+  aiConfig();
 }

@@ -361,3 +361,56 @@ test("portfolio draft validation rejects duplicates and unsafe image urls", () =
     positions: [...draft.positions, { ...draft.positions[0]!, positionKey: "duplicate-key" }]
   }), /重复持仓代码/);
 });
+
+test("collection repository fences stale lease owners and releases unfinished work", async () => {
+  const collection = await import("./repositories/collection.js");
+  const cleanup = new DatabaseSync(databasePath);
+  cleanup.prepare("UPDATE collection_runs SET status = 'success' WHERE status = 'queued'").run();
+  cleanup.close();
+  const creator = db.upsertCreator({
+    platform: "bilibili",
+    externalId: "lease-owner-test",
+    name: "租约测试博主",
+    profileUrl: "https://space.bilibili.com/999991"
+  });
+  const secondCreator = db.upsertCreator({
+    platform: "bilibili",
+    externalId: "lease-owner-test-2",
+    name: "租约测试博主二",
+    profileUrl: "https://space.bilibili.com/999992"
+  });
+  const { run } = collection.createCollectionRun("manual", [creator, secondCreator]);
+  const firstClaim = collection.claimNextQueuedCollectionRun("worker-old", Date.now() - 1);
+  assert.equal(firstClaim?.id, run.id);
+  assert.equal(collection.startCollectionRunItem(firstClaim!.items[0]!.id, "worker-old"), true);
+  const secondClaim = collection.claimNextQueuedCollectionRun("worker-new", Date.now() + 60_000);
+  assert.equal(secondClaim?.id, run.id);
+  assert.equal(collection.finishCollectionRunItem(secondClaim!.items[0]!.id, { status: "success" }, "worker-old"), false);
+  assert.equal(collection.finishCollectionRun(run.id, undefined, "worker-old"), null);
+
+  assert.equal(collection.startCollectionRunItem(secondClaim!.items[0]!.id, "worker-new"), true);
+  assert.equal(collection.finishCollectionRunItem(secondClaim!.items[0]!.id, { status: "success" }, "worker-new"), true);
+  assert.equal(collection.startCollectionRunItem(secondClaim!.items[1]!.id, "worker-new"), true);
+  assert.equal(collection.releaseCollectionRun(run.id, "worker-new"), true);
+  const released = collection.getCollectionRun(run.id)!;
+  assert.equal(released.status, "queued");
+  assert.equal(released.items[0]?.status, "success");
+  assert.equal(released.items[1]?.status, "queued");
+});
+
+test("database transaction helper rolls back and schema verification checks required indexes", async () => {
+  const { database, withTransaction } = await import("./database/connection.js");
+  assert.throws(() => withTransaction((connection) => {
+    connection.prepare(`
+      INSERT INTO auth_login_attempts (scope, address, attemptCount, resetAt, updatedAt)
+      VALUES ('rollback-test', 'local', 1, 1, '2026-08-16T00:00:00.000Z')
+    `).run();
+    throw new Error("rollback");
+  }), /rollback/);
+  assert.equal((database().prepare("SELECT COUNT(*) AS count FROM auth_login_attempts WHERE scope = 'rollback-test'").get() as { count: number }).count, 0);
+
+  database().exec("DROP INDEX idx_content_items_creator");
+  await assert.rejects(() => db.verifyDatabaseSchema(), /missing index idx_content_items_creator/);
+  database().exec("CREATE INDEX idx_content_items_creator ON content_items(creatorId, publishedAt DESC)");
+  await db.verifyDatabaseSchema();
+});

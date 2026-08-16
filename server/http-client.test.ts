@@ -32,3 +32,18 @@ test("HTTP policy aborts requests that exceed their timeout", async () => {
   });
   await assert.rejects(() => fetchWithPolicy("https://example.com", {}, { retries: 0, timeoutMs: 5 }), /aborted/);
 });
+
+test("HTTP policy propagates caller cancellation without retrying", async () => {
+  let calls = 0;
+  globalThis.fetch = async (_input, init) => {
+    calls += 1;
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+  };
+  const controller = new AbortController();
+  const request = fetchWithPolicy("https://example.com", { signal: controller.signal }, { retries: 1, timeoutMs: 1_000 });
+  controller.abort(new Error("worker stopped"));
+  await assert.rejects(() => request, /worker stopped/);
+  assert.equal(calls, 1);
+});

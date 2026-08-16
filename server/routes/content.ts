@@ -1,6 +1,6 @@
 import { Router, type Response } from "express";
 import type { ContentCreatorOptionsResponse, ContentInsightsResponse, HealthResponse } from "../../shared/types.js";
-import { databaseIsHealthy } from "../db.js";
+import { databaseIsHealthy } from "../database/health.js";
 import { listContentCreatorOptions, listContentInsights } from "../repositories/content.js";
 import { HttpError } from "../http-error.js";
 import { assertDate, positiveIntegerQuery } from "../validation.js";

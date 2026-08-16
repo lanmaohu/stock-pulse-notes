@@ -1,6 +1,6 @@
 import { app } from "./app.js";
 import { apiPort, validateApiEnvironment } from "./config.js";
-import { verifyDatabaseSchema } from "./db.js";
+import { verifyDatabaseSchema } from "./database/migrations.js";
 
 export { app } from "./app.js";
 

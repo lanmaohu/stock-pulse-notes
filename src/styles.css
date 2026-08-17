@@ -256,11 +256,14 @@ a { color: inherit; }
 .page-size-select { display: flex; align-items: center; justify-self: end; gap: 7px; color: #68747a; font-size: 13px; white-space: nowrap; }
 .page-size-select select { height: 34px; border: 1px solid #ced7d2; border-radius: 6px; padding: 0 8px; color: #354249; outline: 0; background: #fff; }
 .insight-card { min-width: 0; overflow: hidden; border: 1px solid #d9e0dc; border-radius: 8px; background: #fff; box-shadow: 0 7px 24px rgba(25, 39, 43, .045); }
-.content-overview { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 18px; border-bottom: 1px solid #e3e8e5; padding: 16px; }
+.content-overview { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 18px; padding: 16px; cursor: pointer; transition: background-color .16s ease; }
+.content-overview:hover { background: #fbfcfb; }
+.insight-card.expanded .content-overview { border-bottom: 1px solid #e3e8e5; }
 .cover-link, .cover-placeholder { position: relative; display: grid; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; place-items: center; border-radius: 6px; color: #fff; background: #344249; }
 .cover-link img { width: 100%; height: 100%; object-fit: cover; }
 .cover-link > span { position: absolute; display: grid; width: 38px; height: 38px; place-items: center; border-radius: 50%; color: #fff; background: rgba(15, 24, 28, .72); }
 .cover-placeholder { color: #9bb0ae; background: #e8eeeb; }
+.content-summary { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; }
 .content-heading { align-self: center; min-width: 0; }
 .content-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 11px; color: #778188; font-size: 12px; }
 .content-kicker strong { color: #354148; }
@@ -270,6 +273,11 @@ a { color: inherit; }
 .content-title svg { flex: 0 0 auto; margin-top: 5px; color: #718087; }
 .content-title:hover { color: #1f645d; }
 .content-state { display: flex; flex-wrap: wrap; gap: 10px; color: #788389; font-size: 12px; }
+.insight-toggle { display: inline-grid; width: 38px; height: 38px; place-items: center; border: 1px solid #d4ddd8; border-radius: 50%; padding: 0; color: #52615f; background: #fff; }
+.insight-toggle:hover { border-color: #9db2aa; color: #1f645d; background: #f2f7f4; }
+.insight-toggle:focus-visible { outline: 2px solid #2b756d; outline-offset: 2px; }
+.insight-toggle svg { transition: transform .18s ease; }
+.insight-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .analysis-state { font-weight: 750; }
 .analysis-state.success { color: #277b5c; }
 .analysis-state.error { color: #a63e38; }

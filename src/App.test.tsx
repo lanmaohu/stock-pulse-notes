@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -6,53 +6,139 @@ function json(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 }
 
+function insightFixture(id: string, title: string, contentType: "video" | "note" = "video") {
+  return {
+    content: {
+      id,
+      platform: "bilibili",
+      externalId: `external-${id}`,
+      creatorId: "creator-1",
+      creatorExternalId: "10001",
+      creatorName: "测试博主",
+      contentType,
+      title,
+      description: "",
+      tags: [],
+      sourceUrl: `https://www.bilibili.com/${contentType}/${id}`,
+      coverUrl: `https://example.com/${id}.jpg`,
+      publishedAt: "2026-08-16T08:00:00.000Z",
+      collectedAt: "2026-08-16T09:00:00.000Z",
+      transcript: contentType === "video" ? `${title}的完整字幕文字稿。` : "",
+      transcriptSource: contentType === "video" ? "subtitle" : "metadata",
+      status: "ready",
+      analysisStatus: "success",
+      createdAt: "2026-08-16T09:00:00.000Z",
+      updatedAt: "2026-08-16T09:00:00.000Z"
+    },
+    views: [{
+      id: `view-${id}`,
+      contentId: id,
+      platform: "bilibili",
+      creatorId: "creator-1",
+      creatorExternalId: "10001",
+      creatorName: "测试博主",
+      title,
+      sourceUrl: `https://www.bilibili.com/${contentType}/${id}`,
+      publishedAt: "2026-08-16T08:00:00.000Z",
+      collectedAt: "2026-08-16T09:00:00.000Z",
+      symbols: [id.toUpperCase()],
+      companies: [],
+      stance: "bullish",
+      coreView: `${title}的核心观点`,
+      evidence: [`${title}的依据`],
+      risks: [`${title}的风险`],
+      confidence: "high",
+      sourceSnippet: `${title}的原话`,
+      model: "test-model",
+      createdAt: "2026-08-16T09:00:00.000Z"
+    }]
+  };
+}
+
+function mockPublicInsights(insights: unknown[]) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === "/api/auth/session") return json({ authenticated: false });
+    if (path.startsWith("/api/content-creators")) return json({ creators: [] });
+    if (path.startsWith("/api/content-insights")) return json({
+      insights,
+      pagination: { page: 1, pageSize: 10, totalItems: insights.length, totalPages: 1 },
+      summary: { contentCount: insights.length, viewCount: insights.length, targetCount: insights.length }
+    });
+    throw new Error(`Unexpected request ${path}`);
+  }));
+}
+
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
 });
 
 describe("application routes", () => {
-  test("a video card reveals the Bilibili subtitle transcript on demand", async () => {
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/api/auth/session") return json({ authenticated: false });
-      if (path.startsWith("/api/content-creators")) return json({ creators: [] });
-      if (path.startsWith("/api/content-insights")) return json({
-        insights: [{
-          content: {
-            id: "video-1",
-            platform: "bilibili",
-            externalId: "BV1test",
-            creatorId: "creator-1",
-            creatorExternalId: "10001",
-            creatorName: "测试博主",
-            contentType: "video",
-            title: "测试视频",
-            description: "",
-            tags: [],
-            sourceUrl: "https://www.bilibili.com/video/BV1test",
-            publishedAt: "2026-08-16T08:00:00.000Z",
-            collectedAt: "2026-08-16T09:00:00.000Z",
-            transcript: "这是从 B 站获取的完整字幕文字稿。",
-            transcriptSource: "subtitle",
-            status: "ready",
-            analysisStatus: "success",
-            createdAt: "2026-08-16T09:00:00.000Z",
-            updatedAt: "2026-08-16T09:00:00.000Z"
-          },
-          views: []
-        }],
-        pagination: { page: 1, pageSize: 10, totalItems: 1, totalPages: 1 },
-        summary: { contentCount: 1, viewCount: 0, targetCount: 0 }
-      });
-      throw new Error(`Unexpected request ${path}`);
-    }));
+  test("an insight card is collapsed by default and reveals its details and transcript on demand", async () => {
+    mockPublicInsights([insightFixture("video-1", "测试视频")]);
 
     render(<App />);
-    const transcriptToggle = await screen.findByText("B 站字幕文字稿");
-    expect(screen.queryByText("这是从 B 站获取的完整字幕文字稿。")).not.toBeInTheDocument();
+
+    const expandButton = await screen.findByRole("button", { name: "展开观点：测试视频" });
+    expect(expandButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("link", { name: "测试视频" })).toBeInTheDocument();
+    expect(screen.queryByText("B 站字幕文字稿")).not.toBeInTheDocument();
+    expect(screen.queryByText("测试视频的核心观点")).not.toBeInTheDocument();
+    expect(screen.queryByText("测试视频的依据")).not.toBeInTheDocument();
+    expect(screen.queryByText("测试视频的风险")).not.toBeInTheDocument();
+
+    expandButton.click();
+    const collapseButton = await screen.findByRole("button", { name: "收起观点：测试视频" });
+    expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("测试视频的核心观点")).toBeInTheDocument();
+
+    const transcriptToggle = screen.getByText("B 站字幕文字稿");
+    expect(screen.queryByText("测试视频的完整字幕文字稿。")).not.toBeInTheDocument();
     transcriptToggle.click();
-    expect(await screen.findByText("这是从 B 站获取的完整字幕文字稿。")).toBeInTheDocument();
+    expect(await screen.findByText("测试视频的完整字幕文字稿。")).toBeInTheDocument();
+
+    collapseButton.click();
+    expect(await screen.findByRole("button", { name: "展开观点：测试视频" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("测试视频的核心观点")).not.toBeInTheDocument();
+  });
+
+  test("source links do not toggle a collapsed card while the overview does", async () => {
+    mockPublicInsights([insightFixture("video-1", "测试视频")]);
+
+    render(<App />);
+    const expandButton = await screen.findByRole("button", { name: "展开观点：测试视频" });
+
+    fireEvent.click(screen.getByRole("link", { name: "打开 测试视频" }));
+    expect(expandButton).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("link", { name: "测试视频" }));
+    expect(expandButton).toHaveAttribute("aria-expanded", "false");
+
+    const overview = screen.getByText("测试博主").closest(".content-overview");
+    expect(overview).not.toBeNull();
+    fireEvent.click(overview!);
+    expect(await screen.findByRole("button", { name: "收起观点：测试视频" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test("video and note cards expand independently", async () => {
+    mockPublicInsights([
+      insightFixture("video-1", "测试视频"),
+      insightFixture("note-1", "测试图文", "note")
+    ]);
+
+    render(<App />);
+    const videoButton = await screen.findByRole("button", { name: "展开观点：测试视频" });
+    const noteButton = screen.getByRole("button", { name: "展开观点：测试图文" });
+
+    fireEvent.click(videoButton);
+    fireEvent.click(noteButton);
+    expect(await screen.findByText("测试视频的核心观点")).toBeInTheDocument();
+    expect(await screen.findByText("测试图文的核心观点")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "收起观点：测试视频" }));
+    await waitFor(() => expect(screen.queryByText("测试视频的核心观点")).not.toBeInTheDocument());
+    expect(screen.getByText("测试图文的核心观点")).toBeInTheDocument();
   });
 
   test("the public insights route loads no administrator resources", async () => {

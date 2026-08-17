@@ -2,6 +2,7 @@ import {
   Activity,
   AlertTriangle,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
@@ -128,81 +129,99 @@ function TranscriptPanel({ content }: { content: ContentInsight["content"] }) {
 
 function InsightCard({ insight }: { insight: ContentInsight }) {
   const { content, views } = insight;
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = `insight-details-${content.id}`;
+
   return (
-    <article className="insight-card">
-      <div className="content-overview">
+    <article className={`insight-card${expanded ? " expanded" : ""}`}>
+      <div className="content-overview" onClick={() => setExpanded((current) => !current)}>
         {content.coverUrl ? (
-          <a className="cover-link" href={content.sourceUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${content.title}`}>
+          <a className="cover-link" href={content.sourceUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${content.title}`} onClick={(event) => event.stopPropagation()}>
             <img src={content.coverUrl} alt="" referrerPolicy="no-referrer" />
             <span><Play size={18} fill="currentColor" /></span>
           </a>
         ) : (
           <div className="cover-placeholder"><Video size={28} /></div>
         )}
-        <div className="content-heading">
-          <div className="content-kicker">
-            <span className={`platform-badge ${content.platform}`}>{platformLabel[content.platform]}</span>
-            <strong>{content.creatorName}</strong>
-            <span>发布 {formatDate(content.publishedAt)}</span>
-            <span>采集 {formatDate(content.collectedAt)}</span>
+        <div className="content-summary">
+          <div className="content-heading">
+            <div className="content-kicker">
+              <span className={`platform-badge ${content.platform}`}>{platformLabel[content.platform]}</span>
+              <strong>{content.creatorName}</strong>
+              <span>发布 {formatDate(content.publishedAt)}</span>
+              <span>采集 {formatDate(content.collectedAt)}</span>
+            </div>
+            <a className="content-title" href={content.sourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+              {content.title}<ExternalLink size={15} />
+            </a>
+            <div className="content-state">
+              <span className={`analysis-state ${content.analysisStatus}`}>
+                {content.analysisStatus === "success"
+                  ? "分析完成"
+                  : content.analysisStatus === "running"
+                    ? "分析中"
+                    : content.analysisStatus === "error"
+                      ? "分析失败"
+                      : "等待分析"}
+              </span>
+              <span>{content.transcriptSource === "subtitle" ? "字幕内容" : "字幕缺失 · 仅元数据"}</span>
+            </div>
           </div>
-          <a className="content-title" href={content.sourceUrl} target="_blank" rel="noreferrer">
-            {content.title}<ExternalLink size={15} />
-          </a>
-          <div className="content-state">
-            <span className={`analysis-state ${content.analysisStatus}`}>
-              {content.analysisStatus === "success"
-                ? "分析完成"
-                : content.analysisStatus === "running"
-                  ? "分析中"
-                  : content.analysisStatus === "error"
-                    ? "分析失败"
-                    : "等待分析"}
-            </span>
-            <span>{content.transcriptSource === "subtitle" ? "字幕内容" : "字幕缺失 · 仅元数据"}</span>
-          </div>
+          <button
+            type="button"
+            className="insight-toggle"
+            aria-expanded={expanded}
+            aria-controls={detailsId}
+            aria-label={`${expanded ? "收起" : "展开"}观点：${content.title}`}
+          >
+            <ChevronDown size={19} />
+          </button>
         </div>
       </div>
 
-      <TranscriptPanel content={content} />
+      {expanded ? (
+        <div className="insight-details" id={detailsId}>
+          <TranscriptPanel content={content} />
 
-      {views.length ? (
-        <div className="view-list">
-          {views.map((view) => {
-            const targets = [...view.symbols, ...view.companies];
-            return (
-              <section className="view-section" key={view.id}>
-                <div className="view-title-row">
-                  <div className="target-list">
-                    {(targets.length ? targets : ["未识别具体标的"]).map((target) => <span key={target}>{target}</span>)}
-                  </div>
-                  <div className="view-flags">
-                    <span className={`stance ${view.stance}`}>{stanceLabel[view.stance]}</span>
-                    <span className={`confidence ${view.confidence}`}>{confidenceLabel[view.confidence]}</span>
-                  </div>
-                </div>
-                <p className="core-view">{view.coreView}</p>
-                <div className="evidence-grid">
-                  <div>
-                    <h3>依据</h3>
-                    {view.evidence.length ? <ul>{view.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p>暂无明确依据</p>}
-                  </div>
-                  <div>
-                    <h3>风险</h3>
-                    {view.risks.length ? <ul>{view.risks.map((item) => <li key={item}>{item}</li>)}</ul> : <p>暂无明确风险</p>}
-                  </div>
-                </div>
-                {view.sourceSnippet ? <blockquote>{view.sourceSnippet}</blockquote> : null}
-              </section>
-            );
-          })}
+          {views.length ? (
+            <div className="view-list">
+              {views.map((view) => {
+                const targets = [...view.symbols, ...view.companies];
+                return (
+                  <section className="view-section" key={view.id}>
+                    <div className="view-title-row">
+                      <div className="target-list">
+                        {(targets.length ? targets : ["未识别具体标的"]).map((target) => <span key={target}>{target}</span>)}
+                      </div>
+                      <div className="view-flags">
+                        <span className={`stance ${view.stance}`}>{stanceLabel[view.stance]}</span>
+                        <span className={`confidence ${view.confidence}`}>{confidenceLabel[view.confidence]}</span>
+                      </div>
+                    </div>
+                    <p className="core-view">{view.coreView}</p>
+                    <div className="evidence-grid">
+                      <div>
+                        <h3>依据</h3>
+                        {view.evidence.length ? <ul>{view.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p>暂无明确依据</p>}
+                      </div>
+                      <div>
+                        <h3>风险</h3>
+                        {view.risks.length ? <ul>{view.risks.map((item) => <li key={item}>{item}</li>)}</ul> : <p>暂无明确风险</p>}
+                      </div>
+                    </div>
+                    {view.sourceSnippet ? <blockquote>{view.sourceSnippet}</blockquote> : null}
+                  </section>
+                );
+              })}
+            </div>
+          ) : (
+            <div className={`analysis-message ${content.analysisStatus}`}>
+              {content.analysisStatus === "error" ? <AlertTriangle size={17} /> : <LoaderCircle className={content.analysisStatus === "running" ? "spin" : ""} size={17} />}
+              <span>{content.error || (content.analysisStatus === "success" ? "内容中没有识别到投资观点。" : "投资观点正在生成。")}</span>
+            </div>
+          )}
         </div>
-      ) : (
-        <div className={`analysis-message ${content.analysisStatus}`}>
-          {content.analysisStatus === "error" ? <AlertTriangle size={17} /> : <LoaderCircle className={content.analysisStatus === "running" ? "spin" : ""} size={17} />}
-          <span>{content.error || (content.analysisStatus === "success" ? "内容中没有识别到投资观点。" : "投资观点正在生成。")}</span>
-        </div>
-      )}
+      ) : null}
     </article>
   );
 }

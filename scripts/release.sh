@@ -35,6 +35,7 @@ git archive --format=tar HEAD | tar -xf - -C "$TEMP_DIR"
 
 ssh "$DEPLOY_TARGET" "mkdir -p '$RELEASE_DIR'"
 rsync -az --delete "$TEMP_DIR/" "$DEPLOY_TARGET:$RELEASE_DIR/"
+ssh "$DEPLOY_TARGET" "chmod 755 '$RELEASE_DIR'"
 ssh "$DEPLOY_TARGET" "STOCKPULSE_APP_ROOT='$APP_ROOT' bash '$RELEASE_DIR/deploy/stockpulse.sh' activate '$RELEASE_ID'"
 
 echo "Released $RELEASE_ID to $DEPLOY_TARGET"

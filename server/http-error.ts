@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { log } from "./observability/logger.js";
 
 export class HttpError extends Error {
   constructor(
@@ -20,7 +21,7 @@ export function errorMiddleware(error: unknown, req: Request, res: Response, _ne
   const code = error instanceof HttpError ? error.code : parserStatus ? "INVALID_JSON" : "INTERNAL_ERROR";
   const message = error instanceof Error ? error.message : "Unexpected server error.";
   if (status >= 500) {
-    console.error(JSON.stringify({ level: "error", event: "request_failed", requestId: requestId(req), code, message }));
+    log("error", "request_failed", { requestId: requestId(req), code, message: message.slice(0, 1_000) });
   }
   const publicMessage = error instanceof HttpError
     ? message

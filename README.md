@@ -28,7 +28,7 @@ Browser -> Nginx -> Express API -> SQLite
 ```
 
 - API 只处理 HTTP 请求和任务入队。
-- 单实例 Worker 每秒原子认领一个任务，使用租约和心跳防止多进程重复处理；过期租约可恢复。
+- 单实例 Worker 每秒原子认领一个任务，使用租约和心跳防止多进程重复处理；过期租约可恢复，并每日生成可验证的 SQLite 备份。
 - API 与 Worker 各自只维护一个 SQLite 连接，统一启用 WAL、外键和 5 秒写锁等待。
 - 数据库迁移必须显式执行；API 和 Worker 启动时只校验当前迁移版本。
 - 请求日志使用 JSON 和请求 ID，不记录 Cookie、密码、平台凭据、字幕或 AI 密钥。
@@ -36,7 +36,7 @@ Browser -> Nginx -> Express API -> SQLite
 
 ## 本地开发
 
-要求 Node.js 22；版本记录在 `.nvmrc`。
+要求 Node.js 22.16 或更高的 Node 22 版本；版本记录在 `.nvmrc`。
 
 ```bash
 npm install
@@ -52,6 +52,10 @@ npm run dev
 ```bash
 PORT=3000
 STOCKPULSE_DB_PATH=data/stockpulse.sqlite
+STOCKPULSE_BACKUP_DIR=backups
+BACKUP_LOCAL_TIME=03:15
+BACKUP_RETENTION_DAYS=30
+BACKUP_MINIMUM_COUNT=7
 SESSION_SECRET=replace-with-a-long-random-secret
 PORTFOLIO_VIEW_PASSWORD=change-this-view-password
 PORTFOLIO_ADMIN_PASSWORD=change-this-admin-password
@@ -70,6 +74,7 @@ BILIBILI_COOKIE=
 - 登录失败次数保存在 SQLite；同一 IP 15 分钟最多失败 5 次。
 - `PLATFORM_CREDENTIALS_KEY` 必须是 32 字节 Base64 或 64 位十六进制字符串。
 - `AI_MODEL` 固定为 `deepseek-v4-pro`；旧的 `deepseek-chat`、`deepseek-reasoner` 别名不再接受。
+- 每日备份默认在 Asia/Shanghai 03:15 执行，保留 30 天且至少保留最近 7 份。
 - `BILIBILI_COLLECT_CRON_TIME` 只用于首次初始化，之后由管理后台设置。
 - `BILIBILI_COOKIE` 仅作旧部署回退，正常使用扫码保存的加密凭据。
 
@@ -84,6 +89,8 @@ npm test              # 服务端与前端测试
 npm run build         # 编译 API/Worker 并构建前端
 npm run start:api
 npm run start:worker
+npm run ops -- doctor
+npm run ops -- backup --reason manual
 ```
 
 ## API 边界
@@ -92,6 +99,8 @@ npm run start:worker
 
 ```text
 GET    /api/health
+GET    /api/health/live
+GET    /api/health/ready
 GET    /api/content-insights
 GET    /api/content-creators
 GET    /api/portfolio
@@ -126,7 +135,7 @@ POST /api/webhooks/hermes/messages
 Authorization: Bearer $WEBHOOK_TOKEN
 ```
 
-旧 `/api/login`、笔记 CRUD、聊天查询、每日总结、AI 总结、研究建议和旧 B 站读取接口均返回 `404`。历史表和历史记录原样保留。
+旧 `/api/login`、笔记 CRUD、聊天查询、每日总结、AI 总结、研究建议和旧 B 站读取接口均返回 `404`。旧业务表仅在已验证迁移备份中保留；Hermes 仍使用的 `chat_messages` 不删除。
 
 ## 数据语义
 
@@ -136,19 +145,15 @@ Authorization: Bearer $WEBHOOK_TOKEN
 
 ## 生产部署
 
-生产环境固定使用 Node.js 22、SQLite、Nginx 和 PM2。`deploy/ecosystem.config.cjs` 定义 `stockpulse` API 与单实例 `stockpulse-worker`。
+生产环境固定使用 Node.js 22.16+、SQLite、Nginx 和 PM2。发布使用版本目录和原子软链接，本地执行：
 
-每次部署按以下顺序执行：
+```bash
+DEPLOY_TARGET=user@server npm run deploy:prod
+```
 
-1. 备份 SQLite 和环境配置，并记录核心表数据量。
-2. 安装依赖并执行 `npm run migrate`。
-3. 执行 `npm run typecheck`、`npm test`、`npm run build`。
-4. 使用 `pm2 startOrReload deploy/ecosystem.config.cjs --update-env`。
-5. 验证健康检查、公开脱敏、管理员鉴权、任务认领和 Worker 日志。
+命令会上传当前 Git commit，在停机前完成依赖安装、测试和构建，然后备份、迁移、切换版本、重载 PM2 并自动验收。失败时恢复上一版代码，不自动回退数据库。
 
-重构采用两阶段发布：第一阶段只同步服务端、共享类型和 Worker，保留当前生产前端；确认至少一次定时采集成功后，再同步新的 `dist` 前端和 Nginx `/app` 重定向。任何阶段异常都可回滚代码与 PM2 配置，无需删除或回退数据。
-
-同步代码时必须排除 `.env`、`data`、`backups`、`node_modules` 和 `.git`。数据库变更只新增表、列或索引。
+首次安装、Nginx/PM2 配置、日常检查、备份恢复、回滚和故障处理统一见 [运维手册](docs/operations.md)。
 
 ## 备案
 

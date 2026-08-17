@@ -12,6 +12,13 @@ export interface AiConfig {
   maxOutputTokens: number;
 }
 
+export interface BackupConfig {
+  directory: string;
+  localTime: string;
+  retentionDays: number;
+  minimumCount: number;
+}
+
 let loaded = false;
 
 export function loadEnvironment() {
@@ -58,6 +65,34 @@ export function databasePath() {
   return path.resolve(configured || path.join(process.cwd(), "data", "stockpulse.sqlite"));
 }
 
+function integerEnvironment(name: string, fallback: number, minimum: number, maximum: number) {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
+  const value = Number(raw);
+  if (value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return value;
+}
+
+export function backupConfig(): BackupConfig {
+  const localTime = process.env.BACKUP_LOCAL_TIME?.trim() || "03:15";
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(localTime)) {
+    throw new Error("BACKUP_LOCAL_TIME must use 24-hour HH:MM format.");
+  }
+  return {
+    directory: path.resolve(process.env.STOCKPULSE_BACKUP_DIR?.trim() || path.join(process.cwd(), "backups")),
+    localTime,
+    retentionDays: integerEnvironment("BACKUP_RETENTION_DAYS", 30, 1, 3650),
+    minimumCount: integerEnvironment("BACKUP_MINIMUM_COUNT", 7, 1, 1000)
+  };
+}
+
+export function releaseId() {
+  return process.env.STOCKPULSE_RELEASE?.trim().slice(0, 100) || "development";
+}
+
 export function aiConfig(): AiConfig {
   const configuredModel = process.env.AI_MODEL?.trim() || deepSeekModel;
   if (configuredModel !== deepSeekModel) {
@@ -82,6 +117,7 @@ function validateSharedSecrets() {
   requiredSecret("PLATFORM_CREDENTIALS_KEY");
   assertCredentialEncryptionConfigured();
   databasePath();
+  backupConfig();
 }
 
 export function validateApiEnvironment() {

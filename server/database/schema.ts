@@ -13,7 +13,8 @@ const requiredTables = [
   "portfolio_snapshots",
   "portfolio_positions",
   "portfolio_cash_balances",
-  "portfolio_fx_rates"
+  "portfolio_fx_rates",
+  "service_heartbeats"
 ] as const;
 
 const requiredColumns: Record<string, string[]> = {
@@ -21,7 +22,8 @@ const requiredColumns: Record<string, string[]> = {
   content_stock_views: ["contentId", "model", "confidence", "sourceSnippet"],
   collection_runs: ["status", "leaseOwner", "leaseExpiresAt"],
   collection_run_items: ["runId", "status", "errorCode"],
-  portfolio_snapshots: ["status", "publishedAt"]
+  portfolio_snapshots: ["status", "publishedAt"],
+  service_heartbeats: ["serviceName", "instanceId", "status", "startedAt", "heartbeatAt"]
 };
 
 const requiredIndexes = [
@@ -34,7 +36,7 @@ const requiredIndexes = [
   "idx_portfolio_published"
 ] as const;
 
-export function schemaProblems(connection: DatabaseSync, migrationName: string) {
+export function schemaProblems(connection: DatabaseSync, ...migrationNames: string[]) {
   const problems: string[] = [];
   const objects = connection
     .prepare("SELECT name, type FROM sqlite_schema WHERE type IN ('table', 'index')")
@@ -58,8 +60,10 @@ export function schemaProblems(connection: DatabaseSync, migrationName: string) 
     if (!indexes.has(index)) problems.push(`missing index ${index}`);
   }
   if (tables.has("schema_migrations")) {
-    const version = connection.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(migrationName);
-    if (!version) problems.push(`missing migration ${migrationName}`);
+    for (const migrationName of migrationNames) {
+      const version = connection.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(migrationName);
+      if (!version) problems.push(`missing migration ${migrationName}`);
+    }
   }
   return problems;
 }

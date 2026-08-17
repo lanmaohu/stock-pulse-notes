@@ -5,8 +5,6 @@ import { databasePath } from "../config.js";
 
 const resolvedDatabasePath = databasePath();
 export const databaseDirectory = path.dirname(resolvedDatabasePath);
-export const legacyNotesPath = path.join(databaseDirectory, "notes.json");
-
 let connection: DatabaseSync | null = null;
 
 export function database() {
@@ -16,6 +14,12 @@ export function database() {
     connection.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   }
   return connection;
+}
+
+export function closeDatabase() {
+  if (!connection) return;
+  connection.close();
+  connection = null;
 }
 
 export function withTransaction<T>(operation: (connection: DatabaseSync) => T, mode: "deferred" | "immediate" = "deferred") {

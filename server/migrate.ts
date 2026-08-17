@@ -1,4 +1,5 @@
 import { ensureDatabase } from "./database/migrations.js";
+import { log } from "./observability/logger.js";
 
 await ensureDatabase();
-console.log(JSON.stringify({ level: "info", event: "database_migrated" }));
+log("info", "database_migrated");

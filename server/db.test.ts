@@ -8,6 +8,7 @@ import { test } from "node:test";
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stockpulse-db-test-"));
 const databasePath = path.join(directory, "stockpulse.sqlite");
 process.env.STOCKPULSE_DB_PATH = databasePath;
+process.env.STOCKPULSE_BACKUP_DIR = path.join(directory, "backups");
 
 const legacy = new DatabaseSync(databasePath);
 legacy.exec(`
@@ -81,9 +82,18 @@ legacy.prepare(`
 );
 legacy.close();
 
-const db = await import("./db.js");
+const db = {
+  ...await import("./database/migrations.js"),
+  ...await import("./repositories/collection.js"),
+  ...await import("./repositories/content.js"),
+  ...await import("./repositories/platform.js"),
+  ...await import("./repositories/portfolio.js")
+};
 
 test("legacy Bilibili data migrates once into the generic model", async () => {
+  process.env.STOCKPULSE_MIGRATION_BACKUP_ID = "missing-backup";
+  await assert.rejects(() => db.ensureDatabase(), /ENOENT|no such file/i);
+  delete process.env.STOCKPULSE_MIGRATION_BACKUP_ID;
   await db.ensureDatabase();
   await db.ensureDatabase();
   const read = new DatabaseSync(databasePath, { readOnly: true });
@@ -91,8 +101,20 @@ test("legacy Bilibili data migrates once into the generic model", async () => {
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM content_items").get() as { count: number }).count, 1);
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM content_stock_views").get() as { count: number }).count, 1);
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE name = '2026-08-stability-v1'").get() as { count: number }).count, 1);
+  assert.equal((read.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE name = '2026-08-remove-legacy-v1'").get() as { count: number }).count, 1);
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'index' AND name = 'idx_content_items_published'").get() as { count: number }).count, 1);
+  for (const table of ["notes", "daily_summaries", "research_suggestions", "ai_runs", "video_stock_views", "bilibili_videos", "bilibili_creators"]) {
+    assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) as { count: number }).count, 0, table);
+  }
+  assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'chat_messages'").get() as { count: number }).count, 1);
+  assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'service_heartbeats'").get() as { count: number }).count, 1);
   read.close();
+
+  const backupDirectories = fs.readdirSync(process.env.STOCKPULSE_BACKUP_DIR!).filter((name) => !name.startsWith("."));
+  assert.equal(backupDirectories.length, 1);
+  const manifest = JSON.parse(fs.readFileSync(path.join(process.env.STOCKPULSE_BACKUP_DIR!, backupDirectories[0]!, "manifest.json"), "utf8")) as { tableCounts: Record<string, number> };
+  assert.equal(manifest.tableCounts.bilibili_videos, 1);
+  assert.equal(manifest.tableCounts.video_stock_views, 1);
 
   const insights = db.listContentInsights();
   assert.equal(insights.insights[0]?.content.creatorName, "笨笨的韭菜");
@@ -261,7 +283,7 @@ test("interrupted runs resume only unfinished creator items", () => {
     profileUrl: "https://space.bilibili.com/42"
   });
   const created = db.createCollectionRun("manual", [firstCreator, secondCreator]).run;
-  const running = db.startCollectionRun(created.id)!;
+  const running = db.claimNextQueuedCollectionRun("interrupted-worker", Date.now() - 1)!;
   db.startCollectionRunItem(running.items[0]!.id);
   db.finishCollectionRunItem(running.items[0]!.id, { status: "success", discoveredCount: 1 });
   db.startCollectionRunItem(running.items[1]!.id);

@@ -1,6 +1,9 @@
 import { app } from "./app.js";
 import { apiPort, validateApiEnvironment } from "./config.js";
+import { closeDatabase } from "./database/connection.js";
 import { verifyDatabaseSchema } from "./database/migrations.js";
+import { errorFields, log } from "./observability/logger.js";
+import type { Server } from "node:http";
 
 export { app } from "./app.js";
 
@@ -8,17 +11,49 @@ export async function startServer() {
   validateApiEnvironment();
   await verifyDatabaseSchema();
   const port = apiPort();
-  return app.listen(port, () => {
-    console.log(JSON.stringify({ level: "info", event: "api_started", port }));
+  return new Promise<Server>((resolve, reject) => {
+    const server = app.listen(port, () => {
+      log("info", "api_started", { port });
+      if (typeof process.send === "function") process.send("ready");
+      resolve(server);
+    });
+    server.once("error", reject);
   });
 }
+
+export async function stopServer(server: Server, timeoutMs = 10_000) {
+  log("info", "api_stopping");
+  await new Promise<void>((resolve) => {
+    const force = setTimeout(() => {
+      server.closeAllConnections();
+      resolve();
+    }, timeoutMs);
+    force.unref();
+    server.close(() => {
+      clearTimeout(force);
+      resolve();
+    });
+    server.closeIdleConnections();
+  });
+  closeDatabase();
+  log("info", "api_stopped");
+}
+
 if (process.env.NODE_ENV !== "test") {
-  void startServer().catch((error) => {
-    console.error(JSON.stringify({
-      level: "fatal",
-      event: "api_start_failed",
-      message: error instanceof Error ? error.message : String(error)
-    }));
+  void startServer().then((server) => {
+    let shuttingDown = false;
+    const requestShutdown = () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      void stopServer(server).catch((error) => {
+        log("error", "api_shutdown_failed", errorFields(error));
+        process.exitCode = 1;
+      });
+    };
+    process.once("SIGINT", requestShutdown);
+    process.once("SIGTERM", requestShutdown);
+  }).catch((error) => {
+    log("fatal", "api_start_failed", errorFields(error));
     process.exitCode = 1;
   });
 }

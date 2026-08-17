@@ -1,5 +1,6 @@
 import { enqueueCollection as defaultEnqueueCollection } from "./collection/service.js";
 import { getCollectionSettings as defaultGetCollectionSettings } from "./repositories/collection.js";
+import { errorFields, log } from "./observability/logger.js";
 
 export function shanghaiParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -43,11 +44,7 @@ export function createCollectionScheduler(dependencies: CollectionSchedulerDepen
         lastAttemptKey = attemptKey;
         return;
       }
-      console.error(JSON.stringify({
-        level: "error",
-        event: "scheduled_collection_failed",
-        message: error instanceof Error ? error.message : String(error)
-      }));
+      log("error", "scheduled_collection_failed", errorFields(error));
     }
   };
 

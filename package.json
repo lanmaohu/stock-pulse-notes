@@ -17,7 +17,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "npm run start:api",
     "start:api": "node dist-server/server/index.js",
-    "start:worker": "node dist-server/server/worker.js"
+    "start:worker": "node dist-server/server/worker.js",
+    "ops": "node dist-server/server/ops.js",
+    "deploy:prod": "bash scripts/release.sh"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -45,6 +47,6 @@
     "vitest": "^3.2.4"
   },
   "engines": {
-    "node": ">=22.5 <23"
+    "node": ">=22.16 <23"
   }
 }

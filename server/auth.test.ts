@@ -8,6 +8,7 @@ import { after, before, test } from "node:test";
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stockpulse-http-public-test-"));
 process.env.STOCKPULSE_DB_PATH = path.join(directory, "stockpulse.sqlite");
+process.env.STOCKPULSE_BACKUP_DIR = path.join(directory, "backups");
 process.env.NODE_ENV = "test";
 process.env.WEBHOOK_TOKEN = "test-webhook-token-with-sufficient-length";
 process.env.PLATFORM_CREDENTIALS_KEY = Buffer.alloc(32, 19).toString("base64");
@@ -16,7 +17,11 @@ process.env.PORTFOLIO_VIEW_PASSWORD = "viewer-test-password";
 process.env.PORTFOLIO_ADMIN_PASSWORD = "admin-test-password";
 
 const { app } = await import("./index.js");
-const { ensureDatabase, saveContentStockViews, upsertContent, upsertCreator } = await import("./db.js");
+const { ensureDatabase } = await import("./database/migrations.js");
+const { saveContentStockViews, upsertContent } = await import("./repositories/content.js");
+const { upsertCreator } = await import("./repositories/platform.js");
+const { writeServiceHeartbeat } = await import("./repositories/operations.js");
+const { createVerifiedBackup } = await import("./operations/backup.js");
 const server = app.listen(0);
 let baseUrl = "";
 let seededCreatorId = "";
@@ -57,6 +62,9 @@ before(async () => {
     sourceSnippet: "",
     model: "test-model"
   }]);
+  const now = new Date().toISOString();
+  writeServiceHeartbeat({ serviceName: "worker", instanceId: "http-test-worker", status: "ready", startedAt: now, heartbeatAt: now });
+  await createVerifiedBackup({ reason: "http-test" });
   if (!server.listening) {
     await new Promise<void>((resolve) => server.once("listening", resolve));
   }
@@ -74,6 +82,14 @@ test("public APIs stay available while management reads require an administrator
   const health = await fetch(`${baseUrl}/api/health`);
   assert.equal(health.status, 200);
   assert.equal((await health.json() as { ok: boolean }).ok, true);
+
+  const live = await fetch(`${baseUrl}/api/health/live`);
+  assert.equal(live.status, 200);
+  assert.equal((await live.json() as { release: string }).release, "development");
+
+  const ready = await fetch(`${baseUrl}/api/health/ready`);
+  assert.equal(ready.status, 200);
+  assert.equal((await ready.json() as { checks: { worker: string; backup: string } }).checks.worker, "ok");
 
   const insights = await fetch(`${baseUrl}/api/content-insights`);
   assert.equal(insights.status, 200);

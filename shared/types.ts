@@ -1,13 +1,3 @@
-export interface Note {
-  id: string;
-  title: string;
-  content: string;
-  tags: string[];
-  pinned: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface ChatMessage {
   id: string;
   externalId: string;
@@ -15,37 +5,6 @@ export interface ChatMessage {
   sender: string;
   content: string;
   messageAt: string;
-  createdAt: string;
-}
-
-export interface DailySummary {
-  id: string;
-  date: string;
-  coreViews: string[];
-  insights: string[];
-  investmentThemes: string[];
-  evidence: string[];
-  risks: string[];
-  questions: string[];
-  nextSteps: string[];
-  disclaimer: string;
-  sourceMessageCount: number;
-  sourceNoteCount: number;
-  sourceVideoViewCount: number;
-  model: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ResearchSuggestion {
-  id: string;
-  summaryId: string;
-  date: string;
-  title: string;
-  thesis: string;
-  rationale: string;
-  risks: string[];
-  validationSteps: string[];
   createdAt: string;
 }
 
@@ -325,61 +284,6 @@ export interface BilibiliQrSession {
   error?: string;
 }
 
-export interface BilibiliCreator {
-  mid: string;
-  name: string;
-  enabled: boolean;
-  lastCollectedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type BilibiliVideoStatus = "pending" | "ready" | "metadata_only" | "error";
-export type BilibiliSummaryStatus = "pending" | "success" | "error";
-
-export interface BilibiliVideo {
-  id: string;
-  bvid: string;
-  aid?: string;
-  cid?: string;
-  creatorMid: string;
-  creatorName: string;
-  title: string;
-  description: string;
-  tags: string[];
-  videoUrl: string;
-  publishedAt: string;
-  collectedAt: string;
-  transcript: string;
-  transcriptSource: "subtitle" | "metadata";
-  status: BilibiliVideoStatus;
-  summaryStatus: BilibiliSummaryStatus;
-  error?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface VideoStockView {
-  id: string;
-  videoId: string;
-  bvid: string;
-  creatorMid: string;
-  creatorName: string;
-  title: string;
-  videoUrl: string;
-  publishedAt: string;
-  symbols: string[];
-  companies: string[];
-  stance: "bullish" | "bearish" | "neutral" | "mixed" | "watch";
-  coreView: string;
-  evidence: string[];
-  risks: string[];
-  confidence: "high" | "medium" | "low";
-  sourceSnippet: string;
-  model: string;
-  createdAt: string;
-}
-
 export interface LoginResponse {
   token: string;
 }
@@ -434,46 +338,37 @@ export interface CollectionSettingsResponse {
   settings: CollectionSettings;
 }
 
-export interface NotesResponse {
-  notes: Note[];
-}
-
-export interface ChatMessagesResponse {
-  messages: ChatMessage[];
-}
-
-export interface DailySummariesResponse {
-  summaries: DailySummary[];
-}
-
-export interface ResearchSuggestionsResponse {
-  suggestions: ResearchSuggestion[];
-}
-
-export interface BilibiliVideosResponse {
-  videos: BilibiliVideo[];
-}
-
-export interface VideoStockViewsResponse {
-  views: VideoStockView[];
-}
-
-export interface BilibiliCollectResponse {
-  ok: true;
-  date: string;
-  creatorCount: number;
-  videoCount: number;
-  viewCount: number;
-  errors: string[];
-}
-
 export interface HealthResponse {
   ok: boolean;
   service: "stockpulse";
   storage: "sqlite";
 }
 
-export type NoteInput = Partial<Pick<Note, "title" | "content" | "tags" | "pinned">>;
+export interface LiveHealthResponse {
+  ok: true;
+  service: "stockpulse";
+  release: string;
+  uptimeSeconds: number;
+}
+
+export interface ReadinessHealthResponse {
+  ok: boolean;
+  service: "stockpulse";
+  release: string;
+  checks: {
+    database: "ok" | "error";
+    schema: "ok" | "error";
+    worker: "ok" | "missing" | "stale";
+    backup: "ok" | "missing" | "stale";
+  };
+  queue: {
+    queued: number;
+    running: number;
+    oldestQueuedAt?: string;
+    expiredLeases: number;
+  };
+  latestBackupAt?: string;
+}
 
 export interface HermesMessageInput {
   externalId?: string;

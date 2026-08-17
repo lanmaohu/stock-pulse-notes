@@ -2,6 +2,7 @@ import type { ContentItem, ContentStockView } from "../../shared/types.js";
 import type { ContentStockViewInput } from "../repositories/content.js";
 import { createDeepSeekClient } from "./deepseek-client.js";
 import { AiError, type AiClient, type AiMessage, type AiUsage } from "./types.js";
+import { log as writeLog, type LogLevel } from "../observability/logger.js";
 
 interface ContentAiPayload {
   views: unknown[];
@@ -152,7 +153,12 @@ function mergeUsage(left: AiUsage, right: AiUsage): AiUsage {
 }
 
 function logEntry(log: ContentAnalysisOptions["log"], entry: Record<string, unknown>) {
-  (log || ((value) => console.log(JSON.stringify(value))))(entry);
+  if (log) {
+    log(entry);
+    return;
+  }
+  const { level, event, ...fields } = entry;
+  writeLog((level as LogLevel) || "info", typeof event === "string" ? event : "content_analysis", fields);
 }
 
 export async function analyzeContentStockViews(

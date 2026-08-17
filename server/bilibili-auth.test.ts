@@ -54,10 +54,11 @@ globalThis.fetch = async (input) => {
 };
 
 const auth = await import("./bilibili-auth.js");
-const db = await import("./db.js");
+const { ensureDatabase } = await import("./database/migrations.js");
+const { listPlatformAccounts } = await import("./repositories/platform.js");
 
 before(async () => {
-  await db.ensureDatabase();
+  await ensureDatabase();
 });
 
 after(() => {
@@ -88,7 +89,7 @@ test("confirmed QR login persists only a sanitized platform account", async () =
   assert.equal(confirmed.account?.displayName, "测试账号");
   assert.equal(Object.hasOwn(confirmed.account || {}, "credentialsCiphertext"), false);
 
-  const accounts = db.listPlatformAccounts();
+  const accounts = listPlatformAccounts();
   assert.equal(accounts.length, 1);
   assert.equal(accounts[0]?.externalUserId, "42");
   assert.equal(Object.hasOwn(accounts[0] || {}, "credentialsCiphertext"), false);

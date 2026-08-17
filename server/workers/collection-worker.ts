@@ -9,6 +9,7 @@ import {
   releaseCollectionRun,
   renewCollectionRunLease
 } from "../repositories/collection.js";
+import { errorFields, log } from "../observability/logger.js";
 
 const leaseDurationMs = 5 * 60 * 1_000;
 
@@ -103,11 +104,7 @@ export function createCollectionWorker(dependencies: CollectionWorkerDependencie
 
   function wake() {
     void processQueue().catch((error) => {
-      console.error(JSON.stringify({
-        level: "error",
-        event: "collection_worker_failed",
-        message: error instanceof Error ? error.message : String(error)
-      }));
+      log("error", "collection_worker_failed", errorFields(error));
     });
   }
 

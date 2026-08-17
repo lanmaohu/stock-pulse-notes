@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+import { log } from "./observability/logger.js";
 
 export function requestLogging(req: Request, res: Response, next: NextFunction) {
   const id = req.header("x-request-id")?.slice(0, 100) || crypto.randomUUID();
@@ -8,15 +9,13 @@ export function requestLogging(req: Request, res: Response, next: NextFunction) 
   const requestPath = req.originalUrl.split("?", 1)[0];
   const startedAt = performance.now();
   res.on("finish", () => {
-    console.log(JSON.stringify({
-      level: "info",
-      event: "http_request",
+    log("info", "http_request", {
       requestId: id,
       method: req.method,
       path: requestPath,
       status: res.statusCode,
       durationMs: Math.round(performance.now() - startedAt)
-    }));
+    });
   });
   next();
 }

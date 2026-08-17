@@ -17,7 +17,9 @@ api_port() {
 }
 
 atomic_link() {
-  local target="$1" link="$2" temporary="${link}.next.$$"
+  local target="$1"
+  local link="$2"
+  local temporary="${link}.next.$$"
   ln -s "$target" "$temporary"
   mv -Tf "$temporary" "$link"
 }

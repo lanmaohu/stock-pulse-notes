@@ -15,6 +15,12 @@ function run(command: string, args: string[], options: { cwd?: string; env?: Nod
   });
 }
 
+function writeExecutable(directory: string, name: string, source: string) {
+  const filename = path.join(directory, name);
+  fs.writeFileSync(filename, `#!/usr/bin/env bash\n${source}\n`);
+  fs.chmodSync(filename, 0o755);
+}
+
 test("deployment shell scripts parse and reject an unsafe application root", () => {
   const syntax = run("bash", ["-n", "scripts/release.sh", "scripts/backup-notes.sh", "deploy/stockpulse.sh"]);
   assert.equal(syntax.status, 0, syntax.stderr);
@@ -49,4 +55,42 @@ exit 1
   assert.match(dryRun.stdout, /^release=/m);
   assert.match(dryRun.stdout, /target=deploy@example\.com/);
   assert.match(dryRun.stdout, /remote_directory=\/opt\/stockpulse\/releases\//);
+});
+
+test("the first versioned deployment atomically creates the current release link", () => {
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stockpulse-activate-test-"));
+  const releaseId = "release-test";
+  const releaseDirectory = path.join(appRoot, "releases", releaseId);
+  const binaryDirectory = path.join(appRoot, "bin");
+  fs.mkdirSync(path.join(releaseDirectory, "deploy"), { recursive: true });
+  fs.mkdirSync(binaryDirectory);
+  fs.writeFileSync(path.join(appRoot, ".env"), "PORT=3000\n");
+
+  writeExecutable(binaryDirectory, "node", `
+if [[ "$1" == "-e" && "$2" == *"process.stdin"* ]]; then echo "test-backup"; fi
+if [[ "$1" == *"ops.js" && "$2" == "backup" ]]; then echo '{"backupId":"test-backup"}'; fi
+exit 0`);
+  writeExecutable(binaryDirectory, "npm", "exit 0");
+  writeExecutable(binaryDirectory, "flock", "exit 0");
+  writeExecutable(binaryDirectory, "pm2", `
+if [[ "$1" == "describe" ]]; then exit 1; fi
+exit 0`);
+  writeExecutable(binaryDirectory, "curl", `
+url="\${!#}"
+if [[ "$url" == *"platform-accounts"* ]]; then printf '401';
+elif [[ "$*" == *"%{http_code}"* ]]; then printf '200';
+else printf '{}'; fi`);
+  writeExecutable(binaryDirectory, "rsync", "exit 0");
+  writeExecutable(binaryDirectory, "mv", `
+if [[ "$1" == "-Tf" ]]; then /bin/mv -f "$2" "$3"; else /bin/mv "$@"; fi`);
+
+  try {
+    const activation = run("bash", [path.join(workspace, "deploy", "stockpulse.sh"), "activate", releaseId], {
+      env: { STOCKPULSE_APP_ROOT: appRoot, PATH: `${binaryDirectory}:${process.env.PATH}` }
+    });
+    assert.equal(activation.status, 0, `${activation.stdout}\n${activation.stderr}`);
+    assert.equal(fs.realpathSync(path.join(appRoot, "current")), fs.realpathSync(releaseDirectory));
+  } finally {
+    fs.rmSync(appRoot, { recursive: true, force: true });
+  }
 });

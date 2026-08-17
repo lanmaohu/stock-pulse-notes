@@ -62,9 +62,11 @@ test("the first versioned deployment atomically creates the current release link
   const releaseId = "release-test";
   const releaseDirectory = path.join(appRoot, "releases", releaseId);
   const binaryDirectory = path.join(appRoot, "bin");
+  const pm2Log = path.join(appRoot, "pm2.log");
   fs.mkdirSync(path.join(releaseDirectory, "deploy"), { recursive: true });
   fs.mkdirSync(binaryDirectory);
   fs.writeFileSync(path.join(appRoot, ".env"), "PORT=3000\n");
+  fs.symlinkSync(path.join(appRoot, "current"), path.join(appRoot, "previous"));
 
   writeExecutable(binaryDirectory, "node", `
 if [[ "$1" == "-e" && "$2" == *"process.stdin"* ]]; then echo "test-backup"; fi
@@ -73,7 +75,7 @@ exit 0`);
   writeExecutable(binaryDirectory, "npm", "exit 0");
   writeExecutable(binaryDirectory, "flock", "exit 0");
   writeExecutable(binaryDirectory, "pm2", `
-if [[ "$1" == "describe" ]]; then exit 1; fi
+printf '%s\n' "$*" >> "$PM2_TEST_LOG"
 exit 0`);
   writeExecutable(binaryDirectory, "curl", `
 url="\${!#}"
@@ -86,10 +88,12 @@ if [[ "$1" == "-Tf" ]]; then /bin/mv -f "$2" "$3"; else /bin/mv "$@"; fi`);
 
   try {
     const activation = run("bash", [path.join(workspace, "deploy", "stockpulse.sh"), "activate", releaseId], {
-      env: { STOCKPULSE_APP_ROOT: appRoot, PATH: `${binaryDirectory}:${process.env.PATH}` }
+      env: { STOCKPULSE_APP_ROOT: appRoot, PM2_TEST_LOG: pm2Log, PATH: `${binaryDirectory}:${process.env.PATH}` }
     });
     assert.equal(activation.status, 0, `${activation.stdout}\n${activation.stderr}`);
     assert.equal(fs.realpathSync(path.join(appRoot, "current")), fs.realpathSync(releaseDirectory));
+    assert.equal(fs.lstatSync(path.join(appRoot, "previous"), { throwIfNoEntry: false }), undefined);
+    assert.match(fs.readFileSync(pm2Log, "utf8"), /delete stockpulse-worker stockpulse/);
   } finally {
     fs.rmSync(appRoot, { recursive: true, force: true });
   }

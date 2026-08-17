@@ -113,8 +113,14 @@ activate() {
     npm test
     npm run build
 
-    local old_current stopped=false switched=false
-    old_current="$(readlink -f "$APP_ROOT/current" 2>/dev/null || true)"
+    local old_current="" legacy_layout=false stopped=false switched=false
+    if [[ -L "$APP_ROOT/current" ]]; then
+      old_current="$(readlink -f "$APP_ROOT/current" 2>/dev/null || true)"
+    fi
+    if [[ -z "$old_current" || ! -d "$old_current" ]]; then
+      old_current=""
+      legacy_layout=true
+    fi
     recover() {
       local exit_code=$?
       if $switched; then
@@ -124,8 +130,9 @@ activate() {
       fi
       if $stopped; then
         if [[ -n "$old_current" && -L "$APP_ROOT/current" ]]; then start_current || true
-        elif [[ -f "$APP_ROOT/deploy/ecosystem.config.cjs" ]]; then
-          pm2 startOrReload "$APP_ROOT/deploy/ecosystem.config.cjs" --update-env || true
+        elif $legacy_layout && [[ -f "$APP_ROOT/deploy/ecosystem.config.cjs" ]]; then
+          pm2 delete stockpulse-worker stockpulse >/dev/null 2>&1 || true
+          pm2 start "$APP_ROOT/deploy/ecosystem.config.cjs" --update-env || true
         else
           pm2 restart stockpulse stockpulse-worker --update-env || true
         fi
@@ -144,9 +151,12 @@ activate() {
     backup_id="$(node -e 'const chunks=[]; process.stdin.on("data", c => chunks.push(c)); process.stdin.on("end", () => console.log(JSON.parse(Buffer.concat(chunks)).backupId));' <<<"$backup_output")"
     STOCKPULSE_MIGRATION_BACKUP_ID="$backup_id" node dist-server/server/migrate.js
 
-    if [[ -n "$old_current" ]]; then atomic_link "$old_current" "$APP_ROOT/previous"; fi
+    if [[ -n "$old_current" ]]; then atomic_link "$old_current" "$APP_ROOT/previous"
+    else rm -f -- "$APP_ROOT/previous"
+    fi
     atomic_link "$release_dir" "$APP_ROOT/current"
     switched=true
+    if $legacy_layout; then pm2 delete stockpulse-worker stockpulse >/dev/null 2>&1 || true; fi
     start_current
     wait_until_ready
     smoke_test

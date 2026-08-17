@@ -76,6 +76,9 @@ describe("application routes", () => {
     expect(screen.getAllByRole("link", { name: /个人持仓/ })).toHaveLength(2);
     expect(screen.queryByRole("link", { name: /博主管理/ })).not.toBeInTheDocument();
     expect(requests).toContain("/api/auth/session");
+    expect(requests).toContain("/api/content-insights?page=1&pageSize=10");
+    expect(requests.some((path) => path.includes("publishedDate="))).toBe(false);
+    expect(screen.getByRole("button", { name: "全部" })).toHaveClass("selected");
     expect(requests.some((path) => path.includes("/api/collection-"))).toBe(false);
   });
 

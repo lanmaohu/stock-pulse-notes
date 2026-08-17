@@ -326,7 +326,7 @@ function PublicShell({ title, portfolio = false, children }: { title: string; po
 function InsightsPage() {
   const [creators, setCreators] = useState<ContentCreatorOption[]>([]);
   const [insights, setInsights] = useState<ContentInsight[]>([]);
-  const [date, setDate] = useState(todayShanghai());
+  const [date, setDate] = useState("");
   const [query, setQuery] = useState("");
   const [creatorId, setCreatorId] = useState("");
   const [pageSize, setPageSize] = useState<ContentInsightsPageSize>(storedInsightPageSize);

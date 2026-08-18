@@ -17,7 +17,11 @@ module.exports = {
       exp_backoff_restart_delay: 100,
       max_memory_restart: "300M",
       merge_logs: true,
-      env: { NODE_ENV: "production", STOCKPULSE_SERVICE: "api" }
+      env: {
+        NODE_ENV: "production",
+        STOCKPULSE_SERVICE: "api",
+        STOCKPULSE_RELEASE: process.env.STOCKPULSE_RELEASE || "development"
+      }
     },
     {
       name: "stockpulse-worker",
@@ -36,7 +40,11 @@ module.exports = {
       exp_backoff_restart_delay: 200,
       max_memory_restart: "512M",
       merge_logs: true,
-      env: { NODE_ENV: "production", STOCKPULSE_SERVICE: "worker" }
+      env: {
+        NODE_ENV: "production",
+        STOCKPULSE_SERVICE: "worker",
+        STOCKPULSE_RELEASE: process.env.STOCKPULSE_RELEASE || "development"
+      }
     }
   ]
 };

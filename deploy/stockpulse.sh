@@ -78,13 +78,14 @@ rollback_to_previous() {
 
 status() {
   pm2 status
-  local port
+  local port release
   port="$(api_port)"
+  release="$(basename "$(readlink -f "$APP_ROOT/current")")"
   curl -fsS "http://127.0.0.1:$port/api/health/live"
   echo
   curl -fsS "http://127.0.0.1:$port/api/health/ready"
   echo
-  (cd "$APP_ROOT/current" && node dist-server/server/ops.js doctor)
+  (cd "$APP_ROOT/current" && STOCKPULSE_RELEASE="$release" node dist-server/server/ops.js doctor)
 }
 
 activate() {

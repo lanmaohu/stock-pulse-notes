@@ -201,6 +201,7 @@ test("every management operation rejects anonymous and viewer sessions before ha
     ["/api/platform-accounts"],
     ["/api/platform-accounts/bilibili/qr", { method: "POST" }],
     ["/api/platform-accounts/bilibili/qr/missing"],
+    ["/api/platform-accounts/douyin/qr/missing", { method: "DELETE" }],
     ["/api/platform-accounts/missing/check", { method: "POST" }],
     ["/api/platform-accounts/missing", { method: "DELETE" }],
     ["/api/creators"],

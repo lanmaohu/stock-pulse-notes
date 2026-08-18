@@ -32,6 +32,7 @@ const passportHeaders = {
 
 function publicSession(state: QrState): BilibiliQrSession {
   return {
+    platform: "bilibili",
     sessionId: state.id,
     qrImageDataUrl: state.status === "waiting" || state.status === "scanned" ? state.qrImageDataUrl : undefined,
     status: state.status,
@@ -50,11 +51,12 @@ function cleanSessions() {
   }
 }
 
-export async function createBilibiliQrSession(): Promise<BilibiliQrSession> {
+export async function createBilibiliQrSession(signal?: AbortSignal): Promise<BilibiliQrSession> {
   assertCredentialEncryptionConfigured();
   cleanSessions();
   const response = await fetchWithPolicy("https://passport.bilibili.com/x/passport-login/web/qrcode/generate", {
-    headers: passportHeaders
+    headers: passportHeaders,
+    signal
   }, { timeoutMs: 10_000, retries: 0 });
   if (!response.ok) {
     throw new Error(`生成 B 站二维码失败（${response.status}）。`);
@@ -111,7 +113,7 @@ async function appendDeviceCookies(values: Map<string, string>) {
   }
 }
 
-export async function pollBilibiliQrSession(sessionId: string): Promise<BilibiliQrSession> {
+export async function pollBilibiliQrSession(sessionId: string, signal?: AbortSignal): Promise<BilibiliQrSession> {
   const state = sessions.get(sessionId);
   if (!state) {
     throw new Error("二维码会话不存在，请重新生成。");
@@ -127,7 +129,7 @@ export async function pollBilibiliQrSession(sessionId: string): Promise<Bilibili
   const url = new URL("https://passport.bilibili.com/x/passport-login/web/qrcode/poll");
   url.searchParams.set("qrcode_key", state.qrcodeKey);
   try {
-    const response = await fetchWithPolicy(url, { headers: passportHeaders, redirect: "manual" }, { timeoutMs: 10_000, retries: 1 });
+    const response = await fetchWithPolicy(url, { headers: passportHeaders, redirect: "manual", signal }, { timeoutMs: 10_000, retries: 1 });
     if (!response.ok) {
       throw new Error(`确认 B 站扫码状态失败（${response.status}）。`);
     }
@@ -172,4 +174,8 @@ export async function pollBilibiliQrSession(sessionId: string): Promise<Bilibili
     state.error = error instanceof Error ? error.message : "B 站扫码登录失败。";
     return publicSession(state);
   }
+}
+
+export function cancelBilibiliQrSession(sessionId: string) {
+  return sessions.delete(sessionId);
 }

@@ -4,6 +4,7 @@ import { createCollectionRun } from "../repositories/collection.js";
 import {
   getPlatformAccountWithCredential,
   listCreators,
+  listPlatformAccounts,
   setCreatorEnabled,
   updatePlatformAccountStatus,
   upsertCreator
@@ -47,5 +48,14 @@ export function updateCreatorSubscription(id: string, enabled: boolean) {
 export function enqueueCollection(trigger: CollectionRunTrigger, creatorIds?: string[], scheduledFor?: string) {
   const creators = listCreators({ enabledOnly: true, ids: creatorIds?.length ? creatorIds : undefined });
   if (!creators.length) throw new Error("还没有启用的博主，请先添加博主。");
-  return createCollectionRun(trigger, creators, scheduledFor).run;
+  const connected = new Set(listPlatformAccounts().filter((account) => account.status === "connected").map((account) => account.platform));
+  if (process.env.BILIBILI_COOKIE?.trim()) connected.add("bilibili");
+  const eligible = creators.filter((creator) => connected.has(creator.platform));
+  if (creatorIds?.length && eligible.length !== creators.length) {
+    const unavailable = creators.find((creator) => !connected.has(creator.platform));
+    const label = unavailable?.platform === "bilibili" ? "B 站" : unavailable?.platform === "douyin" ? "抖音" : "小红书";
+    throw new Error(`${label}账号未连接，无法采集该博主。`);
+  }
+  if (!eligible.length) throw new Error("没有可采集的已连接平台博主。");
+  return createCollectionRun(trigger, eligible, scheduledFor).run;
 }

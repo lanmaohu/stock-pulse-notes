@@ -3,6 +3,8 @@ import { apiPort, validateApiEnvironment } from "./config.js";
 import { closeDatabase } from "./database/connection.js";
 import { verifyDatabaseSchema } from "./database/migrations.js";
 import { errorFields, log } from "./observability/logger.js";
+import { closePlatformQrSessions } from "./platform-auth.js";
+import { closePlatformBrowsers } from "./platforms/browser.js";
 import type { Server } from "node:http";
 
 export { app } from "./app.js";
@@ -35,6 +37,8 @@ export async function stopServer(server: Server, timeoutMs = 10_000) {
     });
     server.closeIdleConnections();
   });
+  await closePlatformQrSessions();
+  await closePlatformBrowsers();
   closeDatabase();
   log("info", "api_stopped");
 }

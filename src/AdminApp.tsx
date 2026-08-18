@@ -3,17 +3,17 @@ import {
   KeyRound, Link2, LoaderCircle, LogIn, LogOut, Play, Plus, RefreshCw, Search, Settings,
   ShieldCheck, Trash2, UserRoundCheck, Users, Video, X
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import type {
-  BilibiliQrSession, CollectionRun, CollectionRunsResponse, CollectionSettings,
+  CollectionRun, CollectionRunsResponse, CollectionSettings,
   CollectionSettingsResponse, Creator, CreatorCandidate, CreatorSearchResponse, CreatorsResponse,
-  Platform, PlatformAccount, PlatformAccountsResponse
+  Platform, PlatformAccount, PlatformAccountsResponse, PlatformQrSession
 } from "../shared/types";
 import { useAdminAuth } from "./AdminAuth";
 import { api } from "./api";
 import { siteConfig } from "./siteConfig";
-import { Avatar, EmptyState, FilingFooter, StatusDot, formatDate, formatNumber, runStatusLabel, triggerLabel } from "./ui";
+import { Avatar, EmptyState, FilingFooter, StatusDot, formatDate, formatNumber, platformLabel, runStatusLabel, triggerLabel } from "./ui";
 import { adminNavigationItems, WorkspaceMobileNavigation, WorkspaceSidebar, type AdminTab } from "./WorkspaceNavigation";
 
 const PortfolioView = lazy(() => import("./PortfolioView").then((module) => ({ default: module.PortfolioView })));
@@ -30,12 +30,24 @@ function Loading({ children }: { children: string }) {
   return <div className="route-loading"><LoaderCircle className="spin" size={24} />{children}</div>;
 }
 
-function CreatorsView({ creators, accountConnected, onChanged, onRun }: {
+const platforms: Platform[] = ["bilibili", "douyin", "xiaohongshu"];
+const platformInput: Record<Platform, { hint: string; placeholder: string; idLabel: string }> = {
+  bilibili: { hint: "支持主页链接、UID 或博主名称", placeholder: "例如：笨笨的韭菜 或 11473291", idLabel: "UID" },
+  douyin: { hint: "支持主页链接、SEC_UID 或博主名称", placeholder: "粘贴抖音主页链接或输入博主名称", idLabel: "SEC_UID" },
+  xiaohongshu: { hint: "支持主页链接、用户 ID 或博主名称", placeholder: "粘贴小红书主页链接或输入博主名称", idLabel: "用户 ID" }
+};
+
+function PlatformIcon({ platform }: { platform: Platform }) {
+  return platform === "douyin" ? <Activity size={21} /> : <Video size={21} />;
+}
+
+function CreatorsView({ creators, connectedPlatforms, onChanged, onRun }: {
   creators: Creator[];
-  accountConnected: boolean;
+  connectedPlatforms: Set<Platform>;
   onChanged: () => Promise<void>;
   onRun: (creatorId: string) => Promise<void>;
 }) {
+  const [platform, setPlatform] = useState<Platform>(() => platforms.find((item) => connectedPlatforms.has(item)) || "bilibili");
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<CreatorCandidate[]>([]);
   const [searching, setSearching] = useState(false);
@@ -48,14 +60,21 @@ function CreatorsView({ creators, accountConnected, onChanged, onRun }: {
     setSearching(true);
     setError("");
     try {
-      const result = await api<CreatorSearchResponse>(`/api/creators/search?platform=bilibili&q=${encodeURIComponent(query.trim())}`);
+      const result = await api<CreatorSearchResponse>(`/api/creators/search?platform=${platform}&q=${encodeURIComponent(query.trim())}`);
       setCandidates(result.candidates);
-      if (!result.candidates.length) setError("没有找到匹配的 B 站博主。");
+      if (!result.candidates.length) setError(`没有找到匹配的${platformLabel[platform]}博主。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "博主搜索失败。");
     } finally {
       setSearching(false);
     }
+  }
+
+  function changePlatform(next: Platform) {
+    setPlatform(next);
+    setQuery("");
+    setCandidates([]);
+    setError("");
   }
 
   async function add(candidate: CreatorCandidate) {
@@ -80,37 +99,38 @@ function CreatorsView({ creators, accountConnected, onChanged, onRun }: {
 
   return <div className="creator-layout">
     <section className="workspace-section add-creator">
-      <div className="section-heading"><div><h2>添加 B 站博主</h2><p>支持主页链接、UID 或博主名称</p></div><span className="platform-badge bilibili">B站</span></div>
-      <form className="creator-search" onSubmit={search}><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：笨笨的韭菜 或 11473291" disabled={!accountConnected} /></div><button className="primary-button compact" type="submit" disabled={!accountConnected || searching || !query.trim()}>{searching ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />}查找</button></form>
-      {!accountConnected ? <div className="inline-notice"><KeyRound size={17} />请先在“平台账号”中扫码绑定 B 站账号。</div> : null}
+      <div className="section-heading"><div><h2>添加博主</h2><p>{platformInput[platform].hint}</p></div><span className={`platform-badge ${platform}`}>{platformLabel[platform]}</span></div>
+      <div className="platform-selector" role="group" aria-label="选择内容平台">{platforms.map((item) => <button type="button" key={item} className={item === platform ? "selected" : ""} onClick={() => changePlatform(item)}><span className={`platform-icon mini ${item}`}><PlatformIcon platform={item} /></span>{platformLabel[item]}{connectedPlatforms.has(item) ? <StatusDot status="good" /> : null}</button>)}</div>
+      <form className="creator-search" onSubmit={search}><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={platformInput[platform].placeholder} disabled={!connectedPlatforms.has(platform)} /></div><button className="primary-button compact" type="submit" disabled={!connectedPlatforms.has(platform) || searching || !query.trim()}>{searching ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />}查找</button></form>
+      {!connectedPlatforms.has(platform) ? <div className="inline-notice"><KeyRound size={17} />请先在“平台账号”中扫码绑定{platformLabel[platform]}账号。</div> : null}
       {error ? <div className="inline-error"><AlertTriangle size={17} />{error}</div> : null}
       {candidates.length ? <div className="candidate-list">{candidates.map((candidate) => {
         const exists = creators.some((creator) => creator.platform === candidate.platform && creator.externalId === candidate.externalId);
-        return <div className="candidate-row" key={candidate.externalId}><Avatar src={candidate.avatarUrl} name={candidate.name} /><div><strong>{candidate.name}</strong><span>UID {candidate.externalId}{candidate.followerCount !== undefined ? ` · ${formatNumber(candidate.followerCount)} 粉丝` : ""}</span></div><a className="icon-button" href={candidate.profileUrl} target="_blank" rel="noreferrer" title="打开主页" aria-label="打开主页"><ExternalLink size={16} /></a><button className="secondary-button" onClick={() => void add(candidate)} disabled={exists || adding === candidate.externalId}>{adding === candidate.externalId ? <LoaderCircle className="spin" size={16} /> : exists ? <CheckCircle2 size={16} /> : <Plus size={16} />}{exists ? "已添加" : "添加"}</button></div>;
+        return <div className="candidate-row" key={`${candidate.platform}:${candidate.externalId}`}><Avatar src={candidate.avatarUrl} name={candidate.name} /><div><strong>{candidate.name}</strong><span>{candidate.handle || `${platformInput[candidate.platform].idLabel} ${candidate.externalId}`}{candidate.followerCount !== undefined ? ` · ${formatNumber(candidate.followerCount)} 粉丝` : ""}</span></div><a className="icon-button" href={candidate.profileUrl} target="_blank" rel="noreferrer" title="打开主页" aria-label="打开主页"><ExternalLink size={16} /></a><button className="secondary-button" onClick={() => void add(candidate)} disabled={exists || adding === candidate.externalId}>{adding === candidate.externalId ? <LoaderCircle className="spin" size={16} /> : exists ? <CheckCircle2 size={16} /> : <Plus size={16} />}{exists ? "已添加" : "添加"}</button></div>;
       })}</div> : null}
     </section>
     <section className="workspace-section">
       <div className="section-heading"><div><h2>已订阅博主</h2><p>{creators.filter((item) => item.enabled).length} 个正在监控</p></div></div>
-      {creators.length ? <div className="creator-table">{creators.map((creator) => <div className={`creator-row ${creator.enabled ? "" : "disabled"}`} key={creator.id}><Avatar src={creator.avatarUrl} name={creator.name} /><div className="creator-identity"><strong>{creator.name}</strong><span>UID {creator.externalId}</span></div><div className="creator-sync"><span><StatusDot status={creator.lastCollectionStatus === "error" ? "bad" : creator.lastCollectedAt ? "good" : "idle"} />{creator.lastCollectedAt ? formatDate(creator.lastCollectedAt) : "尚未采集"}</span>{creator.lastError ? <small title={creator.lastError}>{creator.lastError}</small> : null}</div><a className="icon-button" href={creator.profileUrl} target="_blank" rel="noreferrer" title="打开主页" aria-label="打开主页"><ExternalLink size={16} /></a><button className="icon-button" onClick={() => void onRun(creator.id)} disabled={!creator.enabled || !accountConnected} title="立即采集" aria-label="立即采集"><Play size={16} /></button><button className={`toggle ${creator.enabled ? "active" : ""}`} onClick={() => void toggle(creator)} role="switch" aria-checked={creator.enabled} title={creator.enabled ? "暂停监控" : "恢复监控"}><span /></button></div>)}</div> : <EmptyState icon={<Users size={25} />} title="还没有订阅博主" detail="绑定 B 站账号后，通过名称、UID 或主页链接添加。" />}
+      {creators.length ? <div className="creator-table">{creators.map((creator) => <div className={`creator-row ${creator.enabled ? "" : "disabled"}`} key={creator.id}><Avatar src={creator.avatarUrl} name={creator.name} /><div className="creator-identity"><strong>{creator.name}<span className={`platform-badge ${creator.platform}`}>{platformLabel[creator.platform]}</span></strong><span>{creator.handle || `${platformInput[creator.platform].idLabel} ${creator.externalId}`}</span></div><div className="creator-sync"><span><StatusDot status={creator.lastCollectionStatus === "error" ? "bad" : creator.lastCollectedAt ? "good" : "idle"} />{creator.lastCollectedAt ? formatDate(creator.lastCollectedAt) : "尚未采集"}</span>{creator.lastError ? <small title={creator.lastError}>{creator.lastError}</small> : null}</div><a className="icon-button" href={creator.profileUrl} target="_blank" rel="noreferrer" title="打开主页" aria-label="打开主页"><ExternalLink size={16} /></a><button className="icon-button" onClick={() => void onRun(creator.id)} disabled={!creator.enabled || !connectedPlatforms.has(creator.platform)} title="立即采集" aria-label="立即采集"><Play size={16} /></button><button className={`toggle ${creator.enabled ? "active" : ""}`} onClick={() => void toggle(creator)} role="switch" aria-checked={creator.enabled} title={creator.enabled ? "暂停监控" : "恢复监控"}><span /></button></div>)}</div> : <EmptyState icon={<Users size={25} />} title="还没有订阅博主" detail="绑定平台账号后，通过名称、账号 ID 或主页链接添加。" />}
     </section>
   </div>;
 }
 
-function QrDialog({ session, onClose }: { session: BilibiliQrSession; onClose: () => void }) {
+function QrDialog({ session, onClose }: { session: PlatformQrSession; onClose: () => void }) {
   const confirmed = session.status === "confirmed";
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><div className="modal-header"><div><h2 id="qr-title">绑定 B 站账号</h2><p>使用 B 站 App 扫码并确认</p></div><button className="icon-button" onClick={onClose} title="关闭" aria-label="关闭"><X size={18} /></button></div><div className={`qr-stage ${session.status}`}>{session.qrImageDataUrl && !confirmed ? <img src={session.qrImageDataUrl} alt="B 站登录二维码" /> : null}{confirmed ? <CheckCircle2 size={58} /> : session.status === "expired" || session.status === "error" ? <AlertTriangle size={52} /> : null}</div><div className="qr-status">{session.status === "waiting" ? <><LoaderCircle className="spin" size={17} />等待扫码</> : null}{session.status === "scanned" ? <><UserRoundCheck size={17} />已扫码，请在手机确认</> : null}{session.status === "confirmed" ? <><CheckCircle2 size={17} />已绑定 {session.account?.displayName}</> : null}{session.status === "expired" ? <><Clock3 size={17} />二维码已过期</> : null}{session.status === "error" ? <><AlertTriangle size={17} />{session.error || "绑定失败"}</> : null}</div><button className="primary-button" onClick={onClose}>{confirmed ? "完成" : "关闭"}</button></section></div>;
+  const label = platformLabel[session.platform];
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="qr-title"><div className="modal-header"><div><h2 id="qr-title">绑定{label}账号</h2><p>使用{label} App 扫码并确认</p></div><button className="icon-button" onClick={onClose} title="关闭" aria-label="关闭"><X size={18} /></button></div><div className={`qr-stage ${session.status}`}>{session.qrImageDataUrl && !confirmed ? <img src={session.qrImageDataUrl} alt={`${label}登录二维码`} /> : null}{confirmed ? <CheckCircle2 size={58} /> : session.status === "expired" || session.status === "error" ? <AlertTriangle size={52} /> : null}</div><div className="qr-status">{session.status === "waiting" ? <><LoaderCircle className="spin" size={17} />等待扫码</> : null}{session.status === "scanned" ? <><UserRoundCheck size={17} />已扫码，请在手机确认</> : null}{session.status === "confirmed" ? <><CheckCircle2 size={17} />已绑定 {session.account?.displayName}</> : null}{session.status === "expired" ? <><Clock3 size={17} />二维码已过期</> : null}{session.status === "error" ? <><AlertTriangle size={17} />{session.error || "绑定失败"}</> : null}</div><button className="primary-button" onClick={onClose}>{confirmed ? "完成" : "关闭"}</button></section></div>;
 }
 
 function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; onChanged: () => Promise<void> }) {
-  const bilibili = accounts.find((account) => account.platform === "bilibili");
-  const [qr, setQr] = useState<BilibiliQrSession | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [qr, setQr] = useState<PlatformQrSession | null>(null);
+  const [busyPlatform, setBusyPlatform] = useState<Platform | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<Platform, string>>>({});
   useEffect(() => {
     if (!qr || (qr.status !== "waiting" && qr.status !== "scanned")) return;
     const timer = window.setTimeout(async () => {
       try {
-        const next = await api<BilibiliQrSession>(`/api/platform-accounts/bilibili/qr/${qr.sessionId}`);
+        const next = await api<PlatformQrSession>(`/api/platform-accounts/${qr.platform}/qr/${qr.sessionId}`);
         setQr(next);
         if (next.status === "confirmed") await onChanged();
       } catch (caught) {
@@ -119,10 +139,16 @@ function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; on
     }, 1800);
     return () => window.clearTimeout(timer);
   }, [onChanged, qr]);
-  async function connect() { setBusy(true); setError(""); try { setQr(await api<BilibiliQrSession>("/api/platform-accounts/bilibili/qr", { method: "POST" })); } catch (caught) { setError(caught instanceof Error ? caught.message : "无法生成二维码。"); } finally { setBusy(false); } }
-  async function check() { if (!bilibili) return; setBusy(true); setError(""); try { await api(`/api/platform-accounts/${bilibili.id}/check`, { method: "POST" }); await onChanged(); } catch (caught) { setError(caught instanceof Error ? caught.message : "账号检查失败。"); await onChanged(); } finally { setBusy(false); } }
-  async function disconnect() { if (!bilibili || !window.confirm("解绑 B 站账号？已采集内容和博主订阅不会删除。")) return; await api(`/api/platform-accounts/${bilibili.id}`, { method: "DELETE" }); await onChanged(); }
-  return <section className="account-list"><div className="account-row available"><div className="platform-icon bilibili"><Video size={21} /></div>{bilibili ? <Avatar src={bilibili.avatarUrl} name={bilibili.displayName} /> : null}<div className="account-name"><strong>B 站</strong><span>{bilibili ? `${bilibili.displayName} · UID ${bilibili.externalUserId}` : "未绑定"}</span></div><div className="account-status"><StatusDot status={bilibili?.status === "connected" ? "good" : bilibili ? "bad" : "idle"} /><span>{bilibili?.status === "connected" ? "已连接" : bilibili?.status === "checking" ? "检查中" : bilibili?.status === "needs_reauth" ? "需要重新登录" : bilibili?.status === "error" ? "连接异常" : "未连接"}</span>{bilibili?.lastCheckedAt ? <small>{formatDate(bilibili.lastCheckedAt)}</small> : null}</div>{bilibili ? <div className="row-actions"><button className="secondary-button" onClick={() => void check()} disabled={busy}><RefreshCw size={16} />检查</button><button className="secondary-button" onClick={() => void connect()} disabled={busy}><Link2 size={16} />重新绑定</button><button className="icon-button danger" onClick={() => void disconnect()} title="解绑账号" aria-label="解绑账号"><Trash2 size={16} /></button></div> : <button className="primary-button compact" onClick={() => void connect()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />}扫码绑定</button>}</div>{error ? <div className="inline-error"><AlertTriangle size={17} />{error}</div> : null}{(["douyin", "xiaohongshu"] as Platform[]).map((platform) => <div className="account-row unavailable" key={platform}><div className={`platform-icon ${platform}`}>{platform === "douyin" ? <Activity size={21} /> : <Video size={21} />}</div><div className="account-name"><strong>{platform === "douyin" ? "抖音" : "小红书"}</strong><span>数据源待接入</span></div><span className="roadmap-badge">后续版本</span></div>)}{qr ? <QrDialog session={qr} onClose={() => setQr(null)} /> : null}</section>;
+  async function connect(platform: Platform) { setBusyPlatform(platform); setErrors((current) => ({ ...current, [platform]: undefined })); try { setQr(await api<PlatformQrSession>(`/api/platform-accounts/${platform}/qr`, { method: "POST" })); } catch (caught) { setErrors((current) => ({ ...current, [platform]: caught instanceof Error ? caught.message : "无法生成二维码。" })); } finally { setBusyPlatform(null); } }
+  async function check(account: PlatformAccount) { setBusyPlatform(account.platform); setErrors((current) => ({ ...current, [account.platform]: undefined })); try { await api(`/api/platform-accounts/${account.id}/check`, { method: "POST" }); await onChanged(); } catch (caught) { setErrors((current) => ({ ...current, [account.platform]: caught instanceof Error ? caught.message : "账号检查失败。" })); await onChanged(); } finally { setBusyPlatform(null); } }
+  async function disconnect(account: PlatformAccount) { if (!window.confirm(`解绑${platformLabel[account.platform]}账号？已采集内容和博主订阅不会删除。`)) return; await api(`/api/platform-accounts/${account.id}`, { method: "DELETE" }); await onChanged(); }
+  async function closeQr() { const current = qr; setQr(null); if (current && (current.status === "waiting" || current.status === "scanned")) await api(`/api/platform-accounts/${current.platform}/qr/${current.sessionId}`, { method: "DELETE" }).catch(() => undefined); }
+  return <section className="account-list">{platforms.map((platform) => {
+    const account = accounts.find((item) => item.platform === platform);
+    const busy = busyPlatform === platform;
+    const status = account?.status === "connected" ? "已连接" : account?.status === "checking" ? "检查中" : account?.status === "needs_reauth" ? "需要重新登录" : account?.status === "error" ? "连接异常" : "未连接";
+    return <Fragment key={platform}><div className="account-row available"><div className={`platform-icon ${platform}`}><PlatformIcon platform={platform} /></div>{account ? <Avatar src={account.avatarUrl} name={account.displayName} /> : <span className="account-avatar-spacer" />}<div className="account-name"><strong>{platformLabel[platform]}</strong><span>{account ? `${account.displayName} · ${platformInput[platform].idLabel} ${account.externalUserId}` : "未绑定"}</span></div><div className="account-status"><StatusDot status={account?.status === "connected" ? "good" : account ? "bad" : "idle"} /><span>{status}</span>{account?.lastCheckedAt ? <small>{formatDate(account.lastCheckedAt)}</small> : null}</div>{account ? <div className="row-actions"><button className="secondary-button" onClick={() => void check(account)} disabled={busy}><RefreshCw size={16} />检查</button><button className="secondary-button" onClick={() => void connect(platform)} disabled={busy}><Link2 size={16} />重新绑定</button><button className="icon-button danger" onClick={() => void disconnect(account)} title="解绑账号" aria-label={`解绑${platformLabel[platform]}账号`}><Trash2 size={16} /></button></div> : <button className="primary-button compact" onClick={() => void connect(platform)} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />}扫码绑定</button>}</div>{errors[platform] ? <div className="inline-error"><AlertTriangle size={17} />{errors[platform]}</div> : null}</Fragment>;
+  })}{qr ? <QrDialog session={qr} onClose={() => void closeQr()} /> : null}</section>;
 }
 
 function RunsView({ runs, onRefresh }: { runs: CollectionRun[]; onRefresh: () => void }) {
@@ -193,8 +219,9 @@ function AdminWorkspace() {
   if (checking) return <Loading>正在检查管理员会话</Loading>;
   if (!authenticated) return <Navigate to={`/admin/login?next=${encodeURIComponent(location.pathname)}`} replace />;
   if (!tab) return <Navigate to="/admin/creators" replace />;
-  const connected = accounts.some((account) => account.platform === "bilibili" && account.status === "connected");
+  const connectedPlatforms = new Set(accounts.filter((account) => account.status === "connected").map((account) => account.platform));
   const enabledCreators = creators.filter((creator) => creator.enabled);
+  const collectibleCreators = enabledCreators.filter((creator) => connectedPlatforms.has(creator.platform));
   async function runNow(creatorId?: string) { setBusyRun(true); setError(""); try { await api<CollectionRun>("/api/collection-runs", { method: "POST", body: JSON.stringify(creatorId ? { creatorIds: [creatorId] } : {}) }); navigate("/admin/runs"); } catch (caught) { setError(caught instanceof Error ? caught.message : "无法开始采集。"); } finally { setBusyRun(false); } }
   async function signOut() {
     try {
@@ -204,7 +231,7 @@ function AdminWorkspace() {
       setError(caught instanceof Error ? caught.message : "退出失败。");
     }
   }
-  return <main className="app-shell admin-shell"><WorkspaceSidebar hasActiveRun={hasActiveRun} onLogout={() => void signOut()} /><section className="main-column"><header className="page-header"><div><span className="eyebrow">Stockpulse Admin</span><h1>{current?.label}</h1></div><div className="header-actions">{tab === "creators" ? <button className="primary-button compact" onClick={() => void runNow()} disabled={busyRun || !connected || !enabledCreators.length}>{busyRun ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}立即采集</button> : null}<button className="secondary-button admin-logout-button" onClick={() => void signOut()} aria-label="退出管理"><LogOut size={16} /><span>退出管理</span></button></div></header><WorkspaceMobileNavigation hasActiveRun={hasActiveRun} />{error ? <div className="global-error"><AlertTriangle size={18} /><span>{error}</span><button className="icon-clear" onClick={() => setError("")} aria-label="关闭"><X size={16} /></button></div> : null}{tab === "portfolio" ? <Suspense fallback={<Loading>正在加载持仓</Loading>}><PortfolioView adminMode /></Suspense> : <div className="page-content">{loading ? <div className="loading-line"><LoaderCircle className="spin" size={18} />正在加载管理数据</div> : null}{!loading && tab === "creators" ? <CreatorsView creators={creators} accountConnected={connected} onChanged={async () => { await Promise.all([loadCreators(), loadAccounts()]); }} onRun={runNow} /> : null}{!loading && tab === "accounts" ? <AccountsView accounts={accounts} onChanged={loadAccounts} /> : null}{!loading && tab === "runs" ? <RunsView runs={runs} onRefresh={loadRuns} /> : null}{!loading && tab === "settings" && settings ? <SettingsView settings={settings} onSaved={setSettings} /> : null}</div>}<FilingFooter /></section></main>;
+  return <main className="app-shell admin-shell"><WorkspaceSidebar hasActiveRun={hasActiveRun} onLogout={() => void signOut()} /><section className="main-column"><header className="page-header"><div><span className="eyebrow">Stockpulse Admin</span><h1>{current?.label}</h1></div><div className="header-actions">{tab === "creators" ? <button className="primary-button compact" onClick={() => void runNow()} disabled={busyRun || !collectibleCreators.length}>{busyRun ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}立即采集</button> : null}<button className="secondary-button admin-logout-button" onClick={() => void signOut()} aria-label="退出管理"><LogOut size={16} /><span>退出管理</span></button></div></header><WorkspaceMobileNavigation hasActiveRun={hasActiveRun} />{error ? <div className="global-error"><AlertTriangle size={18} /><span>{error}</span><button className="icon-clear" onClick={() => setError("")} aria-label="关闭"><X size={16} /></button></div> : null}{tab === "portfolio" ? <Suspense fallback={<Loading>正在加载持仓</Loading>}><PortfolioView adminMode /></Suspense> : <div className="page-content">{loading ? <div className="loading-line"><LoaderCircle className="spin" size={18} />正在加载管理数据</div> : null}{!loading && tab === "creators" ? <CreatorsView creators={creators} connectedPlatforms={connectedPlatforms} onChanged={async () => { await Promise.all([loadCreators(), loadAccounts()]); }} onRun={runNow} /> : null}{!loading && tab === "accounts" ? <AccountsView accounts={accounts} onChanged={loadAccounts} /> : null}{!loading && tab === "runs" ? <RunsView runs={runs} onRefresh={loadRuns} /> : null}{!loading && tab === "settings" && settings ? <SettingsView settings={settings} onSaved={setSettings} /> : null}</div>}<FilingFooter /></section></main>;
 }
 
 export default function AdminApp() {

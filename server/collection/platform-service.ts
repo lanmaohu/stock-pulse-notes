@@ -3,6 +3,8 @@ import { decryptCredential } from "../credentials.js";
 import { getPlatformAccountWithCredential, updatePlatformAccountStatus } from "../repositories/platform.js";
 import { PlatformError } from "../platforms/types.js";
 
+const platformNames: Record<Platform, string> = { bilibili: "B 站", douyin: "抖音", xiaohongshu: "小红书" };
+
 export function platformCredential(platform: Platform) {
   const stored = getPlatformAccountWithCredential(platform);
   if (stored) {
@@ -15,7 +17,7 @@ export function platformCredential(platform: Platform) {
   }
   const legacy = platform === "bilibili" ? process.env.BILIBILI_COOKIE?.trim() : "";
   if (legacy) return { credential: legacy, accountId: undefined };
-  throw new PlatformError("auth_required", "请先绑定 B 站账号。");
+  throw new PlatformError("auth_required", `请先绑定${platformNames[platform]}账号。`);
 }
 
 export function collectionErrorDetails(error: unknown) {

@@ -48,7 +48,7 @@ function normalizeConfidence(value: unknown, transcriptSource: ContentItem["tran
   if (value === "high" || value === "medium" || value === "low") {
     return transcriptSource === "metadata" && value === "high" ? "medium" : value;
   }
-  return transcriptSource === "subtitle" ? "medium" : "low";
+  return transcriptSource === "metadata" ? "low" : "medium";
 }
 
 function parsePayload(content: string): ContentAiPayload {
@@ -79,7 +79,7 @@ function promptFor(content: ContentItem): AiMessage[] {
   return [
     {
       role: "system",
-      content: "你是一个严谨的投资视频观点提取助手。只基于用户提供的视频标题、简介、字幕或元数据提取投资相关观点。标的可以是股票代码、上市公司、行业板块或产业主题。不要给买入/卖出/仓位指令，不要补充材料之外的事实。必须返回 JSON。"
+      content: "你是一个严谨的投资内容观点提取助手。只基于用户提供的标题、简介、正文、字幕或元数据提取投资相关观点。标的可以是股票代码、上市公司、行业板块或产业主题。不要给买入/卖出/仓位指令，不要补充材料之外的事实。必须返回 JSON。"
     },
     {
       role: "user",
@@ -91,10 +91,10 @@ function promptFor(content: ContentItem): AiMessage[] {
 简介:
 ${content.description.slice(0, limits.description) || "无"}
 
-字幕或元数据:
+正文、字幕或元数据:
 ${content.transcript.slice(0, limits.transcript)}
 
-请提取视频里的核心标的观点。没有明确股票代码时，也要提取明确出现的上市公司、行业板块或产业主题；只有完全没有投资相关内容时才返回空 views。严格 JSON:
+请提取内容里的核心标的观点。没有明确股票代码时，也要提取明确出现的上市公司、行业板块或产业主题；只有完全没有投资相关内容时才返回空 views。严格 JSON:
 {
   "views": [{
     "symbols": string[], "companies": string[],
@@ -187,7 +187,7 @@ export async function analyzeContentStockViews(
       views = normalizeViews(parsePayload(repair.content), content, client.model);
     }
 
-    const result = views.length || content.transcriptSource === "subtitle"
+    const result = views.length || content.transcriptSource !== "metadata"
       ? views
       : [{
           symbols: [],

@@ -141,6 +141,22 @@ describe("application routes", () => {
     expect(screen.getByText("测试图文的核心观点")).toBeInTheDocument();
   });
 
+  test("a Xiaohongshu note exposes its body as a first-class content source", async () => {
+    const insight = insightFixture("xhs-note", "小红书测试笔记", "note");
+    insight.content.platform = "xiaohongshu";
+    insight.content.transcript = "这是用于分析的完整笔记正文。";
+    insight.content.transcriptSource = "body";
+    insight.views[0]!.platform = "xiaohongshu";
+    mockPublicInsights([insight]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "展开观点：小红书测试笔记" }));
+    const bodyLabels = await screen.findAllByText("正文内容");
+    expect(bodyLabels.length).toBe(2);
+    fireEvent.click(bodyLabels[1]!);
+    expect(await screen.findByText("这是用于分析的完整笔记正文。")).toBeInTheDocument();
+  });
+
   test("the public insights route loads no administrator resources", async () => {
     const requests: string[] = [];
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
@@ -232,8 +248,26 @@ describe("application routes", () => {
 
     render(<App />);
     await screen.findByText("还没有订阅博主");
+    for (const platform of ["B站", "抖音", "小红书"]) expect(screen.getByRole("button", { name: new RegExp(platform) })).toBeInTheDocument();
     await waitFor(() => expect(requests).toContain("/api/creators"));
     expect(requests).not.toContain("/api/collection-runs");
     expect(requests).not.toContain("/api/collection-settings");
+  });
+
+  test("platform accounts page offers binding for all three sources", async () => {
+    window.history.replaceState({}, "", "/admin/accounts");
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return json({ authenticated: true });
+      if (path === "/api/platform-accounts") return json({ accounts: [] });
+      throw new Error(`Unexpected request ${path}`);
+    }));
+
+    render(<App />);
+    expect((await screen.findAllByRole("button", { name: "扫码绑定" })).length).toBe(3);
+    expect(screen.getByText("B站")).toBeInTheDocument();
+    expect(screen.getByText("抖音")).toBeInTheDocument();
+    expect(screen.getByText("小红书")).toBeInTheDocument();
+    expect(screen.queryByText("后续版本")).not.toBeInTheDocument();
   });
 });

@@ -6,6 +6,7 @@ export type PlatformErrorCode =
   | "creator_not_found"
   | "content_unavailable"
   | "transcript_unavailable"
+  | "browser_unavailable"
   | "platform_error";
 
 export class PlatformError extends Error {
@@ -33,7 +34,7 @@ export interface CollectedContent {
   coverUrl?: string;
   publishedAt: string;
   transcript: string;
-  transcriptSource: "subtitle" | "metadata";
+  transcriptSource: "subtitle" | "body" | "metadata";
   status: "ready" | "metadata_only";
   warning?: string;
 }

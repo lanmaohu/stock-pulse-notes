@@ -40,7 +40,7 @@ export function createCollectionScheduler(dependencies: CollectionSchedulerDepen
       enqueue("scheduled", undefined, current.date);
       lastAttemptKey = attemptKey;
     } catch (error) {
-      if (error instanceof Error && error.message.includes("还没有启用的博主")) {
+      if (error instanceof Error && (error.message.includes("还没有启用的博主") || error.message.includes("没有可采集的已连接平台博主"))) {
         lastAttemptKey = attemptKey;
         return;
       }

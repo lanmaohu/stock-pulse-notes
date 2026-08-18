@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { assertCredentialEncryptionConfigured } from "./credentials.js";
 
@@ -63,6 +63,29 @@ export function databasePath() {
     throw new Error("STOCKPULSE_DB_PATH cannot be empty.");
   }
   return path.resolve(configured || path.join(process.cwd(), "data", "stockpulse.sqlite"));
+}
+
+export function platformBrowserExecutablePath() {
+  const configured = process.env.PLATFORM_BROWSER_EXECUTABLE_PATH?.trim();
+  const candidates = [
+    configured,
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium"
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const executable = candidates.find((candidate) => {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!executable) {
+    throw new Error("PLATFORM_BROWSER_EXECUTABLE_PATH 未指向可用的 Chromium。请先安装 Chromium 并配置该路径。");
+  }
+  return path.resolve(executable);
 }
 
 function integerEnvironment(name: string, fallback: number, minimum: number, maximum: number) {

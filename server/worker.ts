@@ -3,6 +3,7 @@ import { startCollectionWorker } from "./collector.js";
 import { closeDatabase } from "./database/connection.js";
 import { verifyDatabaseSchema } from "./database/migrations.js";
 import { errorFields, log } from "./observability/logger.js";
+import { closePlatformBrowsers } from "./platforms/browser.js";
 import { createBackupScheduler } from "./operations/backup-scheduler.js";
 import { createServiceHeartbeat } from "./operations/heartbeat.js";
 import { startCollectionScheduler } from "./scheduler.js";
@@ -21,6 +22,7 @@ async function startWorker() {
     shuttingDown = true;
     stopScheduler();
     await Promise.all([stopBackupScheduler(), stopWorker()]);
+    await closePlatformBrowsers();
     heartbeat.stop();
     closeDatabase();
     log("info", "worker_stopped");

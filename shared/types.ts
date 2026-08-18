@@ -75,7 +75,7 @@ export interface ContentItem {
   publishedAt: string;
   collectedAt: string;
   transcript: string;
-  transcriptSource: "subtitle" | "metadata";
+  transcriptSource: "subtitle" | "body" | "metadata";
   status: ContentStatus;
   analysisStatus: AnalysisStatus;
   error?: string;
@@ -273,16 +273,20 @@ export interface PortfolioDraftResponse {
   latestPublishedAt?: string;
 }
 
-export type BilibiliQrStatus = "waiting" | "scanned" | "confirmed" | "expired" | "error";
+export type PlatformQrStatus = "waiting" | "scanned" | "confirmed" | "expired" | "error";
 
-export interface BilibiliQrSession {
+export interface PlatformQrSession {
+  platform: Platform;
   sessionId: string;
   qrImageDataUrl?: string;
-  status: BilibiliQrStatus;
+  status: PlatformQrStatus;
   expiresAt: string;
   account?: PlatformAccount;
   error?: string;
 }
+
+export type BilibiliQrStatus = PlatformQrStatus;
+export type BilibiliQrSession = PlatformQrSession;
 
 export interface LoginResponse {
   token: string;

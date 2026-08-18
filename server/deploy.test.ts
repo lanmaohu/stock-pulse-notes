@@ -65,7 +65,10 @@ test("the first versioned deployment atomically creates the current release link
   const pm2Log = path.join(appRoot, "pm2.log");
   fs.mkdirSync(path.join(releaseDirectory, "deploy"), { recursive: true });
   fs.mkdirSync(binaryDirectory);
-  fs.writeFileSync(path.join(appRoot, ".env"), "PORT=3000\n");
+  fs.writeFileSync(
+    path.join(appRoot, ".env"),
+    `PORT=3000\nPLATFORM_BROWSER_EXECUTABLE_PATH=${path.join(binaryDirectory, "chromium")}\n`
+  );
   fs.symlinkSync(path.join(appRoot, "current"), path.join(appRoot, "previous"));
 
   writeExecutable(binaryDirectory, "node", `
@@ -73,6 +76,7 @@ if [[ "$1" == "-e" && "$2" == *"process.stdin"* ]]; then echo "test-backup"; fi
 if [[ "$1" == *"ops.js" && "$2" == "backup" ]]; then echo '{"backupId":"test-backup"}'; fi
 exit 0`);
   writeExecutable(binaryDirectory, "npm", "exit 0");
+  writeExecutable(binaryDirectory, "chromium", "exit 0");
   writeExecutable(binaryDirectory, "flock", "exit 0");
   writeExecutable(binaryDirectory, "pm2", `
 printf '%s\n' "$*" >> "$PM2_TEST_LOG"

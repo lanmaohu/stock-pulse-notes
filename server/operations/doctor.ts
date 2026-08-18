@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { backupConfig, databasePath, releaseId, validateApiEnvironment, validateWorkerEnvironment } from "../config.js";
+import { backupConfig, databasePath, platformBrowserExecutablePath, releaseId, validateApiEnvironment, validateWorkerEnvironment } from "../config.js";
 import { readinessStatus } from "../database/health.js";
 
 export interface DoctorReport {
@@ -7,6 +7,7 @@ export interface DoctorReport {
   release: string;
   node: { status: "ok" | "error"; version: string; required: string };
   configuration: { status: "ok" | "error"; message?: string };
+  browser: { status: "ok" | "error"; executable?: string; message?: string };
   readiness: Awaited<ReturnType<typeof readinessStatus>>;
   disk: { status: "ok" | "warn" | "error"; availableBytes?: number; databaseBytes?: number };
   warnings: string[];
@@ -27,6 +28,12 @@ export async function doctorReport(now = Date.now()): Promise<DoctorReport> {
   }
 
   const readiness = await readinessStatus(now);
+  let browser: DoctorReport["browser"];
+  try {
+    browser = { status: "ok", executable: platformBrowserExecutablePath() };
+  } catch (error) {
+    browser = { status: "error", message: error instanceof Error ? error.message : String(error) };
+  }
   const warnings: string[] = [];
   if (readiness.queue.oldestQueuedAt && now - Date.parse(readiness.queue.oldestQueuedAt) > 15 * 60 * 1_000) {
     warnings.push("The oldest collection run has been queued for more than 15 minutes.");
@@ -48,10 +55,11 @@ export async function doctorReport(now = Date.now()): Promise<DoctorReport> {
 
   const node = { status: nodeSupported() ? "ok" as const : "error" as const, version: process.version, required: ">=22.16 <23" };
   return {
-    ok: node.status === "ok" && configuration.status === "ok" && readiness.ok && disk.status !== "error" && warnings.length === 0,
+    ok: node.status === "ok" && configuration.status === "ok" && browser.status === "ok" && readiness.ok && disk.status !== "error" && warnings.length === 0,
     release: releaseId(),
     node,
     configuration,
+    browser,
     readiness,
     disk,
     warnings

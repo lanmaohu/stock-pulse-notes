@@ -89,7 +89,13 @@ export function upsertContent(input: ContentInput): { content: ContentItem; isNe
     .get(input.platform, input.externalId) as ContentItemRow | undefined;
   const now = new Date().toISOString();
   const id = existing?.id || crypto.randomUUID();
-  const upgradedTranscript = existing?.transcriptSource === "metadata" && input.transcriptSource === "subtitle";
+  const sourceRank: Record<ContentItem["transcriptSource"], number> = { metadata: 0, body: 1, subtitle: 2 };
+  const upgradedTranscript = existing ? sourceRank[input.transcriptSource] > sourceRank[existing.transcriptSource] : false;
+  const preserveTranscript = existing ? sourceRank[input.transcriptSource] < sourceRank[existing.transcriptSource] : false;
+  const transcript = preserveTranscript && existing ? existing.transcript : input.transcript;
+  const transcriptSource = preserveTranscript && existing ? existing.transcriptSource : input.transcriptSource;
+  const status = preserveTranscript && existing ? existing.status : input.status;
+  const contentError = preserveTranscript && existing ? existing.error : input.error;
   const analysisStatus = upgradedTranscript || existing?.analysisStatus === "error"
     ? "pending"
     : existing?.analysisStatus || "pending";
@@ -130,11 +136,11 @@ export function upsertContent(input: ContentInput): { content: ContentItem; isNe
     input.coverUrl || null,
     input.publishedAt,
     existing?.collectedAt || now,
-    input.transcript.slice(0, 120_000),
-    input.transcriptSource,
-    input.status,
+    transcript.slice(0, 120_000),
+    transcriptSource,
+    status,
     analysisStatus,
-    input.error || null,
+    contentError || null,
     existing?.createdAt || now,
     now
   );

@@ -163,6 +163,46 @@ test("an active worker lease cannot be recovered or claimed by another worker", 
   db.finishCollectionRun(created.id, "测试结束任务");
 });
 
+test("a later metadata-only collection cannot replace a stored body or subtitle", () => {
+  const creator = db.upsertCreator({
+    platform: "xiaohongshu",
+    externalId: "source-rank-creator",
+    name: "来源等级测试",
+    profileUrl: "https://www.xiaohongshu.com/user/profile/source-rank-creator"
+  });
+  const common = {
+    platform: "xiaohongshu" as const,
+    externalId: "source-rank-note",
+    creatorId: creator.id,
+    creatorExternalId: creator.externalId,
+    creatorName: creator.name,
+    contentType: "note" as const,
+    title: "来源等级测试",
+    description: "完整正文",
+    tags: ["测试"],
+    sourceUrl: "https://www.xiaohongshu.com/explore/source-rank-note",
+    publishedAt: "2026-08-18T04:00:00.000Z"
+  };
+  const body = db.upsertContent({
+    ...common,
+    transcript: "这是完整正文",
+    transcriptSource: "body",
+    status: "ready"
+  }).content;
+  const afterMetadata = db.upsertContent({
+    ...common,
+    transcript: "标题：来源等级测试",
+    transcriptSource: "metadata",
+    status: "metadata_only",
+    error: "正文暂时不可用"
+  }).content;
+  assert.equal(body.transcriptSource, "body");
+  assert.equal(afterMetadata.transcriptSource, "body");
+  assert.equal(afterMetadata.transcript, "这是完整正文");
+  assert.equal(afterMetadata.status, "ready");
+  assert.equal(afterMetadata.error, undefined);
+});
+
 test("content insights mix content types and paginate by Shanghai publish time with full-result statistics", () => {
   const creator = db.upsertCreator({
     platform: "bilibili",

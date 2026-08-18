@@ -1,4 +1,4 @@
-import { Router, type Response } from "express";
+import { Router, type Request, type Response } from "express";
 import type {
   CollectionRunsResponse,
   CollectionSettingsResponse,
@@ -7,7 +7,7 @@ import type {
   PlatformAccountsResponse
 } from "../../shared/types.js";
 import { requireAdmin } from "../auth.js";
-import { createBilibiliQrSession, pollBilibiliQrSession } from "../bilibili-auth.js";
+import { cancelPlatformQrSession, createPlatformQrSession, pollPlatformQrSession } from "../platform-auth.js";
 import {
   checkPlatformAccount,
   enqueueCollection,
@@ -18,10 +18,47 @@ import {
 import { deletePlatformAccount, listCreators, listPlatformAccounts } from "../repositories/platform.js";
 import { getCollectionRun, getCollectionSettings, listCollectionRuns, updateCollectionSettings } from "../repositories/collection.js";
 import { HttpError } from "../http-error.js";
+import { PlatformError } from "../platforms/types.js";
 import { platformValue, routeParam } from "../validation.js";
 
 export const adminRouter = Router();
 const protectedPrefixes = ["/platform-accounts", "/creators", "/collection-runs", "/collection-settings"];
+
+function platformHttpError(error: unknown, fallbackMessage: string, fallbackCode: string) {
+  if (!(error instanceof PlatformError)) {
+    return new HttpError(502, error instanceof Error ? error.message : fallbackMessage, fallbackCode);
+  }
+  const status = error.code === "auth_required"
+    ? 409
+    : error.code === "rate_limited"
+      ? 429
+      : error.code === "browser_unavailable"
+        ? 503
+        : error.code === "creator_not_found" || error.code === "content_unavailable"
+          ? 404
+          : 502;
+  return new HttpError(status, error.message, `PLATFORM_${error.code.toUpperCase()}`);
+}
+
+function requestAbort(req: Request, res: Response) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) controller.abort(new PlatformError("platform_error", "请求已取消。"));
+  };
+  const close = () => {
+    if (!res.writableEnded) abort();
+  };
+  req.once("aborted", abort);
+  res.once("close", close);
+  return {
+    signal: controller.signal,
+    dispose() {
+      req.off("aborted", abort);
+      res.off("close", close);
+    }
+  };
+}
+
 adminRouter.use((req, res, next) => {
   if (protectedPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
     return requireAdmin(req, res, next);
@@ -33,29 +70,48 @@ adminRouter.get("/platform-accounts", (_req, res: Response<PlatformAccountsRespo
   res.json({ accounts: listPlatformAccounts() });
 });
 
-adminRouter.post("/platform-accounts/bilibili/qr", async (_req, res, next) => {
+adminRouter.post("/platform-accounts/:platform/qr", async (req, res, next) => {
+  const request = requestAbort(req, res);
   try {
-    res.status(201).json(await createBilibiliQrSession());
+    const platform = platformValue(routeParam(req, "platform"));
+    res.status(201).json(await createPlatformQrSession(platform, request.signal));
   } catch (error) {
-    next(new HttpError(502, error instanceof Error ? error.message : "无法生成 B 站登录二维码。", "PLATFORM_QR_FAILED"));
+    next(platformHttpError(error, "无法生成平台登录二维码。", "PLATFORM_QR_FAILED"));
+  } finally {
+    request.dispose();
   }
 });
 
-adminRouter.get("/platform-accounts/bilibili/qr/:sessionId", async (req, res, next) => {
+adminRouter.get("/platform-accounts/:platform/qr/:sessionId", async (req, res, next) => {
+  const request = requestAbort(req, res);
   try {
-    res.json(await pollBilibiliQrSession(routeParam(req, "sessionId")));
+    const platform = platformValue(routeParam(req, "platform"));
+    res.json(await pollPlatformQrSession(platform, routeParam(req, "sessionId"), request.signal));
   } catch (error) {
     next(new HttpError(404, error instanceof Error ? error.message : "二维码会话不存在。", "QR_SESSION_NOT_FOUND"));
+  } finally {
+    request.dispose();
   }
+});
+
+adminRouter.delete("/platform-accounts/:platform/qr/:sessionId", async (req, res) => {
+  const platform = platformValue(routeParam(req, "platform"));
+  if (!await cancelPlatformQrSession(platform, routeParam(req, "sessionId"))) {
+    throw new HttpError(404, "二维码会话不存在。", "QR_SESSION_NOT_FOUND");
+  }
+  res.status(204).end();
 });
 
 adminRouter.post("/platform-accounts/:id/check", async (req, res, next) => {
   const account = listPlatformAccounts().find((item) => item.id === routeParam(req, "id"));
   if (!account) throw new HttpError(404, "平台账号不存在。", "PLATFORM_ACCOUNT_NOT_FOUND");
+  const request = requestAbort(req, res);
   try {
-    res.json(await checkPlatformAccount(account.platform));
+    res.json(await checkPlatformAccount(account.platform, request.signal));
   } catch (error) {
-    next(new HttpError(502, error instanceof Error ? error.message : "平台账号检查失败。", "PLATFORM_CHECK_FAILED"));
+    next(platformHttpError(error, "平台账号检查失败。", "PLATFORM_CHECK_FAILED"));
+  } finally {
+    request.dispose();
   }
 });
 
@@ -71,24 +127,30 @@ adminRouter.get("/creators", (_req, res: Response<CreatorsResponse>) => {
 });
 
 adminRouter.get("/creators/search", async (req, res: Response<CreatorSearchResponse>, next) => {
+  const request = requestAbort(req, res);
   try {
     const platform = platformValue(req.query.platform);
     const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 120) : "";
     if (!query) throw new HttpError(400, "请输入博主名称、UID 或主页链接。", "INVALID_CREATOR_QUERY");
-    res.json({ candidates: await searchPlatformCreators(platform, query) });
+    res.json({ candidates: await searchPlatformCreators(platform, query, request.signal) });
   } catch (error) {
-    next(error instanceof HttpError ? error : new HttpError(502, error instanceof Error ? error.message : "博主搜索失败。", "CREATOR_SEARCH_FAILED"));
+    next(error instanceof HttpError ? error : platformHttpError(error, "博主搜索失败。", "CREATOR_SEARCH_FAILED"));
+  } finally {
+    request.dispose();
   }
 });
 
 adminRouter.post("/creators", async (req, res, next) => {
+  const request = requestAbort(req, res);
   try {
     const platform = platformValue(req.body?.platform);
     const externalId = typeof req.body?.externalId === "string" ? req.body.externalId.trim().slice(0, 80) : "";
     if (!externalId) throw new HttpError(400, "缺少博主账号。", "INVALID_CREATOR");
-    res.status(201).json(await subscribeCreator(platform, externalId));
+    res.status(201).json(await subscribeCreator(platform, externalId, request.signal));
   } catch (error) {
-    next(error instanceof HttpError ? error : new HttpError(502, error instanceof Error ? error.message : "添加博主失败。", "CREATOR_SUBSCRIBE_FAILED"));
+    next(error instanceof HttpError ? error : platformHttpError(error, "添加博主失败。", "CREATOR_SUBSCRIBE_FAILED"));
+  } finally {
+    request.dispose();
   }
 });
 

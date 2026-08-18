@@ -1,12 +1,13 @@
 import type { Platform } from "../../shared/types.js";
 import { bilibiliAdapter } from "./bilibili.js";
+import { douyinAdapter } from "./douyin.js";
 import type { PlatformAdapter } from "./types.js";
-import { unavailableAdapter } from "./unavailable.js";
+import { xiaohongshuAdapter } from "./xiaohongshu.js";
 
 const adapters: Record<Platform, PlatformAdapter> = {
   bilibili: bilibiliAdapter,
-  douyin: unavailableAdapter("douyin"),
-  xiaohongshu: unavailableAdapter("xiaohongshu")
+  douyin: douyinAdapter,
+  xiaohongshu: xiaohongshuAdapter
 };
 
 export function platformAdapter(platform: Platform) {

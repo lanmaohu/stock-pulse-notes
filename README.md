@@ -24,7 +24,7 @@ Browser -> Nginx -> Express API -> SQLite
                                       |
                                       v
                               Collection Worker
-                              Bilibili + DeepSeek
+                    Bilibili + Douyin + Xiaohongshu + DeepSeek
 ```
 
 - API 只处理 HTTP 请求和任务入队。
@@ -65,6 +65,7 @@ AI_MODEL=deepseek-v4-pro
 DEEPSEEK_API_KEY=your-deepseek-api-key
 BILIBILI_COLLECT_CRON_TIME=07:30
 BILIBILI_COOKIE=
+PLATFORM_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ```
 
 - `SESSION_SECRET` 签名 HttpOnly、SameSite=Strict 会话 Cookie。
@@ -77,6 +78,7 @@ BILIBILI_COOKIE=
 - 每日备份默认在 Asia/Shanghai 03:15 执行，保留 30 天且至少保留最近 7 份。
 - `BILIBILI_COLLECT_CRON_TIME` 只用于首次初始化，之后由管理后台设置。
 - `BILIBILI_COOKIE` 仅作旧部署回退，正常使用扫码保存的加密凭据。
+- `PLATFORM_BROWSER_EXECUTABLE_PATH` 指向可执行的 Chromium；抖音和小红书使用真实网页会话生成动态签名。
 
 ## 命令
 
@@ -115,7 +117,9 @@ POST   /api/auth/login
 POST   /api/auth/logout
 GET    /api/auth/session
 GET    /api/platform-accounts
-POST   /api/platform-accounts/bilibili/qr
+POST   /api/platform-accounts/:platform/qr
+GET    /api/platform-accounts/:platform/qr/:sessionId
+DELETE /api/platform-accounts/:platform/qr/:sessionId
 GET    /api/creators
 POST   /api/creators
 POST   /api/collection-runs

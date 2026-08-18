@@ -16,6 +16,10 @@ api_port() {
   if [[ "$value" =~ ^[0-9]+$ ]]; then printf '%s' "$value"; else printf '3000'; fi
 }
 
+platform_browser_path() {
+  awk -F= '/^PLATFORM_BROWSER_EXECUTABLE_PATH=/ { value=substr($0, index($0, "=")+1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print value; exit }' "$APP_ROOT/.env" 2>/dev/null || true
+}
+
 atomic_link() {
   local target="$1"
   local link="$2"
@@ -98,6 +102,9 @@ activate() {
   command -v curl >/dev/null
   command -v rsync >/dev/null
   node -e 'const [major,minor]=process.versions.node.split(".").map(Number); if (major !== 22 || minor < 16) { console.error("Node >=22.16 <23 is required."); process.exit(1); }'
+  local browser_path
+  browser_path="$(platform_browser_path)"
+  [[ -n "$browser_path" && -x "$browser_path" ]] || { echo "PLATFORM_BROWSER_EXECUTABLE_PATH must point to an executable Chromium binary." >&2; exit 2; }
 
   mkdir -p "$APP_ROOT/releases" "$APP_ROOT/data" "$APP_ROOT/backups"
   chmod 700 "$APP_ROOT/backups"

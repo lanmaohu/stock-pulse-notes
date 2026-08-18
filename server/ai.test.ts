@@ -103,6 +103,18 @@ test("content analysis accepts fenced JSON and normalizes unsafe fields", async 
   assert.equal(result[0]?.model, "deepseek-v4-pro");
 });
 
+test("Xiaohongshu body text remains a full-confidence content source", async () => {
+  const { client, calls } = fakeClient(['{"views":[{"symbols":[],"companies":["测试公司"],"coreView":"正文观点","evidence":[],"risks":[],"confidence":"high"}]}']);
+  const result = await analyzeContentStockViews(content({
+    platform: "xiaohongshu",
+    contentType: "note",
+    transcript: "小红书正文内容",
+    transcriptSource: "body"
+  }), { client, log: () => undefined });
+  assert.equal(result[0]?.confidence, "high");
+  assert.match(calls[0]?.messages[1]?.content || "", /正文、字幕或元数据/);
+});
+
 test("invalid model output gets one repair request without another transport retry", async () => {
   const { client, calls } = fakeClient([
     "not-json",

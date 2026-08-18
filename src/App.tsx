@@ -103,24 +103,27 @@ const confidenceLabel: Record<ViewConfidence, string> = { high: "高置信", med
 
 function TranscriptPanel({ content }: { content: ContentInsight["content"] }) {
   const [expanded, setExpanded] = useState(false);
-  if (content.contentType !== "video") return null;
+  const isBody = content.transcriptSource === "body";
+  if (content.contentType !== "video" && !isBody) return null;
 
-  const transcript = content.transcriptSource === "subtitle" ? content.transcript.trim() : "";
+  const transcript = content.transcriptSource === "metadata" ? "" : content.transcript.trim();
   const hasTranscript = Boolean(transcript);
+  const sourcePlatformLabel = content.platform === "bilibili" ? "B 站" : platformLabel[content.platform];
+  const sourceLabel = isBody ? "正文内容" : `${sourcePlatformLabel}字幕文字稿`;
   return (
     <details
       className={`transcript-panel${hasTranscript ? "" : " unavailable"}`}
       onToggle={(event) => setExpanded(event.currentTarget.open)}
     >
       <summary>
-        <span>{hasTranscript ? "B 站字幕文字稿" : "B 站字幕文字稿 · 未获取"}</span>
+        <span>{hasTranscript ? sourceLabel : `${sourcePlatformLabel}字幕文字稿 · 未获取`}</span>
         {hasTranscript ? <small>{transcript.length.toLocaleString("zh-CN")} 字</small> : null}
       </summary>
       {expanded ? (
         hasTranscript ? (
           <div className="transcript-copy">{transcript}</div>
         ) : (
-          <p className="transcript-unavailable">该视频暂未获取到 B 站字幕，当前观点仅依据标题、简介和标签生成。</p>
+          <p className="transcript-unavailable">该视频暂未获取到平台字幕，当前观点仅依据标题、简介和标签生成。</p>
         )
       ) : null}
     </details>
@@ -164,7 +167,7 @@ function InsightCard({ insight }: { insight: ContentInsight }) {
                       ? "分析失败"
                       : "等待分析"}
               </span>
-              <span>{content.transcriptSource === "subtitle" ? "字幕内容" : "字幕缺失 · 仅元数据"}</span>
+              <span>{content.transcriptSource === "subtitle" ? "字幕内容" : content.transcriptSource === "body" ? "正文内容" : "仅元数据"}</span>
             </div>
           </div>
           <button

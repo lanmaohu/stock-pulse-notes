@@ -407,9 +407,12 @@ function InsightsPage() {
   </div></PublicShell>;
 }
 
-function PublicPortfolioPage() {
+function AdminPortfolioPage() {
   const navigate = useNavigate();
-  usePageMetadata(`${siteConfig.name}｜个人持仓全景图`, "index,follow");
+  const { authenticated, checking } = useAdminAuth();
+  usePageMetadata(`${siteConfig.name}｜个人持仓全景图`, "noindex,nofollow");
+  if (checking) return <PortfolioRouteFallback />;
+  if (!authenticated) return <Navigate to="/admin/login?next=%2Fportfolio" replace />;
   return <PublicShell title="个人持仓" portfolio><Suspense fallback={<PortfolioRouteFallback />}><PortfolioView onManage={() => navigate("/admin/portfolio")} /></Suspense></PublicShell>;
 }
 
@@ -426,7 +429,7 @@ class RouteErrorBoundary extends Component<{ children: React.ReactNode }, { fail
 export function App() {
   return <RouteErrorBoundary><BrowserRouter><AdminAuthProvider><Routes>
     <Route path="/" element={<InsightsPage />} />
-    <Route path="/portfolio" element={<PublicPortfolioPage />} />
+    <Route path="/portfolio" element={<AdminPortfolioPage />} />
     <Route path="/admin/*" element={<Suspense fallback={<div className="route-loading"><LoaderCircle className="spin" size={24} />正在加载管理后台</div>}><AdminApp /></Suspense>} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes></AdminAuthProvider></BrowserRouter></RouteErrorBoundary>;

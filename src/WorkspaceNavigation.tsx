@@ -24,7 +24,10 @@ type NavigationItem = {
 };
 
 export const publicNavigationItems: NavigationItem[] = [
-  { path: "/", label: "最新观点", icon: <Activity size={18} /> },
+  { path: "/", label: "最新观点", icon: <Activity size={18} /> }
+];
+
+const administratorPageItems: NavigationItem[] = [
   { path: "/portfolio", label: "个人持仓", icon: <BriefcaseBusiness size={18} /> }
 ];
 
@@ -37,7 +40,7 @@ export const adminNavigationItems: NavigationItem[] = [
 ];
 
 function NavigationLinks({ authenticated, hasActiveRun = false }: { authenticated: boolean; hasActiveRun?: boolean }) {
-  const items = authenticated ? [...publicNavigationItems, ...adminNavigationItems] : publicNavigationItems;
+  const items = authenticated ? [...publicNavigationItems, ...administratorPageItems, ...adminNavigationItems] : publicNavigationItems;
   return <>{items.map((item) => (
     <NavLink key={item.path} to={item.path} end={item.path === "/"}>
       {item.icon}

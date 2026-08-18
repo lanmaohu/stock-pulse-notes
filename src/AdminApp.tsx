@@ -150,7 +150,8 @@ function AdminLoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [searchParams] = useSearchParams();
-  const next = searchParams.get("next")?.startsWith("/admin/") ? searchParams.get("next")! : "/admin/creators";
+  const requestedNext = searchParams.get("next");
+  const next = requestedNext === "/portfolio" || requestedNext?.startsWith("/admin/") ? requestedNext : "/admin/creators";
   usePageMetadata(`${siteConfig.name}｜管理员登录`);
   if (checking) return <Loading>正在检查管理员会话</Loading>;
   if (authenticated) return <Navigate to={next} replace />;

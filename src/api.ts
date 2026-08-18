@@ -6,7 +6,7 @@ const protectedPrefixes = [
   "/api/creators",
   "/api/collection-runs",
   "/api/collection-settings",
-  "/api/portfolio/admin/"
+  "/api/portfolio"
 ];
 
 export class ApiError extends Error {

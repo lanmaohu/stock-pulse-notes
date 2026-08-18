@@ -11,7 +11,7 @@ import { HttpError } from "../http-error.js";
 
 export const portfolioRouter = Router();
 
-portfolioRouter.get("/portfolio", (req, res: Response<PortfolioResponse>) => {
+portfolioRouter.get("/portfolio", requireAdmin, (req, res: Response<PortfolioResponse>) => {
   res.set("Cache-Control", "private, no-store");
   res.vary("Cookie");
   res.json(getPortfolio(accessLevel(req)));

@@ -239,10 +239,9 @@ test("webhook keeps its independent bearer-token boundary", async () => {
   assert.equal(missingToken.status, 401);
 });
 
-test("portfolio APIs separate public, viewer, and administrator access", async () => {
+test("portfolio data is only available to administrators", async () => {
   const initial = await fetch(`${baseUrl}/api/portfolio`);
-  assert.equal(initial.status, 200);
-  assert.equal((await initial.json() as { portfolio: unknown }).portfolio, null);
+  assert.equal(initial.status, 401);
 
   const viewerLogin = await fetch(`${baseUrl}/api/portfolio/session`, {
     method: "POST",
@@ -251,6 +250,8 @@ test("portfolio APIs separate public, viewer, and administrator access", async (
   });
   assert.equal(viewerLogin.status, 200);
   const viewerCookie = viewerLogin.headers.get("set-cookie")!.split(";")[0]!;
+  const viewerPortfolio = await fetch(`${baseUrl}/api/portfolio`, { headers: { cookie: viewerCookie } });
+  assert.equal(viewerPortfolio.status, 403);
   const viewerDraft = await fetch(`${baseUrl}/api/portfolio/admin/draft`, { headers: { cookie: viewerCookie } });
   assert.equal(viewerDraft.status, 403);
 
@@ -291,14 +292,14 @@ test("portfolio APIs separate public, viewer, and administrator access", async (
   assert.equal(publish.status, 201);
 
   const publicResponse = await fetch(`${baseUrl}/api/portfolio`);
-  const publicBody = await publicResponse.json() as { portfolio: { positions: Array<Record<string, unknown>>; summary: Record<string, unknown> } };
-  assert.equal("quantity" in publicBody.portfolio.positions[0]!, false);
-  assert.equal("totalAssetsCny" in publicBody.portfolio.summary, false);
-
+  assert.equal(publicResponse.status, 401);
   const viewerResponse = await fetch(`${baseUrl}/api/portfolio`, { headers: { cookie: viewerCookie } });
-  const viewerBody = await viewerResponse.json() as { accessLevel: string; portfolio: { positions: Array<Record<string, unknown>> } };
-  assert.equal(viewerBody.accessLevel, "viewer");
-  assert.equal(viewerBody.portfolio.positions[0]!.quantity, 2);
+  assert.equal(viewerResponse.status, 403);
+  const adminResponse = await fetch(`${baseUrl}/api/portfolio`, { headers: { cookie: adminCookie } });
+  const adminBody = await adminResponse.json() as { accessLevel: string; portfolio: { positions: Array<Record<string, unknown>> } };
+  assert.equal(adminResponse.status, 200);
+  assert.equal(adminBody.accessLevel, "admin");
+  assert.equal(adminBody.portfolio.positions[0]!.quantity, 2);
 
   const logout = await fetch(`${baseUrl}/api/portfolio/session`, { method: "DELETE", headers: { cookie: adminCookie } });
   assert.equal(logout.status, 200);

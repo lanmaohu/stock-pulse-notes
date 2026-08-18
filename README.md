@@ -1,11 +1,11 @@
 # Stockpulse
 
-Stockpulse 是一个自托管的投资观点监控与个人持仓展示站。公开站只提供最新观点和个人持仓；博主、平台账号、采集任务、采集设置和持仓发布统一放在管理员后台。
+Stockpulse 是一个自托管的投资观点监控与个人持仓管理站。公开站只提供最新观点；个人持仓、博主、平台账号、采集任务、采集设置和持仓发布仅对管理员开放。
 
 ## 页面地址
 
 - `/`：最新观点，视频与文字按发布时间倒序混排
-- `/portfolio`：公开持仓及查看密码解锁
+- `/portfolio`：管理员个人持仓全景图
 - `/admin/login`：管理员登录
 - `/admin/creators`：博主管理
 - `/admin/accounts`：平台账号
@@ -13,7 +13,7 @@ Stockpulse 是一个自托管的投资观点监控与个人持仓展示站。公
 - `/admin/settings`：采集设置
 - `/admin/portfolio`：持仓草稿与发布
 
-公开页面不会读取管理数据。管理页面按栏目加载自身数据；管理员会话失效后统一返回登录页。
+公开页面不会读取管理数据。个人持仓和管理页面按栏目加载自身数据；管理员会话失效后统一返回登录页。
 
 ## 运行架构
 
@@ -103,7 +103,6 @@ GET    /api/health/live
 GET    /api/health/ready
 GET    /api/content-insights
 GET    /api/content-creators
-GET    /api/portfolio
 GET    /api/portfolio/session
 POST   /api/portfolio/session
 DELETE /api/portfolio/session
@@ -123,12 +122,13 @@ POST   /api/collection-runs
 GET    /api/collection-runs
 GET    /api/collection-settings
 PUT    /api/collection-settings
+GET    /api/portfolio
 GET    /api/portfolio/admin/draft
 PUT    /api/portfolio/admin/draft
 POST   /api/portfolio/admin/publish
 ```
 
-未登录访问管理接口返回 `401`，仅持仓查看者返回 `403`。所有错误响应都包含 `error`、稳定 `code` 和 `requestId`。Hermes 仅保留写入 webhook，并继续使用独立 Bearer Token：
+未登录访问管理接口或持仓数据返回 `401`，仅持仓查看者返回 `403`。所有错误响应都包含 `error`、稳定 `code` 和 `requestId`。Hermes 仅保留写入 webhook，并继续使用独立 Bearer Token：
 
 ```text
 POST /api/webhooks/hermes/messages

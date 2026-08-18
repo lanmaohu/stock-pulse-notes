@@ -25,6 +25,7 @@ interface WebQrState {
   qrElementObserved?: boolean;
   loginObservedAt?: number;
   polling?: Promise<PlatformQrSession>;
+  monitorTimer?: ReturnType<typeof setInterval>;
   expiryTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -67,7 +68,9 @@ function publicSession(state: WebQrState): PlatformQrSession {
 
 async function closeState(state: WebQrState) {
   if (state.expiryTimer) clearTimeout(state.expiryTimer);
+  if (state.monitorTimer) clearInterval(state.monitorTimer);
   state.expiryTimer = undefined;
+  state.monitorTimer = undefined;
   const browser = state.browser;
   state.browser = undefined;
   await browser?.close().catch(() => undefined);
@@ -162,6 +165,16 @@ async function createWebQrSession(platform: WebPlatform, signal?: AbortSignal): 
     state.qrElementObserved = qr.elementObserved;
     state.initialLoginCookies = await loginCookieSnapshot(state);
     sessions.set(state.id, state);
+    state.monitorTimer = setInterval(() => {
+      if (state.status !== "waiting" && state.status !== "scanned") {
+        if (state.monitorTimer) clearInterval(state.monitorTimer);
+        state.monitorTimer = undefined;
+        return;
+      }
+      if (state.polling) return;
+      state.polling = pollWebState(state).finally(() => { state.polling = undefined; });
+    }, 1_000);
+    state.monitorTimer.unref?.();
     state.expiryTimer = setTimeout(() => {
       if (state.status !== "waiting" && state.status !== "scanned") return;
       state.status = "expired";
@@ -196,9 +209,10 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
     return publicSession(state);
   }
   const browser = state.browser;
-  if (!browser || browser.page.isClosed()) {
+  if (!browser || browser.page.isClosed() || !browser.browser.isConnected()) {
     state.status = "error";
     state.error = "登录浏览器已关闭，请重新生成二维码。";
+    await closeState(state);
     return publicSession(state);
   }
   try {

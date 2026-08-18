@@ -35,6 +35,7 @@ export interface ManagedBrowserSession {
   browser: Browser;
   context: BrowserContext;
   page: Page;
+  userAgent: string;
   close(): Promise<void>;
 }
 
@@ -67,12 +68,12 @@ export function parseBrowserCredential(platform: Platform, credential: string): 
 export async function serializeBrowserCredential(
   platform: "douyin" | "xiaohongshu",
   context: BrowserContext,
-  page: Page
+  userAgent: string
 ) {
   return JSON.stringify({
     version: 1,
     platform,
-    userAgent: await page.evaluate(() => navigator.userAgent),
+    userAgent,
     storageState: await context.storageState()
   } satisfies BrowserCredentialEnvelope);
 }
@@ -123,11 +124,15 @@ export async function openPlatformBrowser(
     const page = await context.newPage();
     page.setDefaultTimeout(20_000);
     page.setDefaultNavigationTimeout(13_000);
+    // Capture this while the page is still on about:blank. Reading it during a
+    // successful QR login races with the platform's automatic navigation.
+    const userAgent = envelope?.userAgent || await page.evaluate(() => navigator.userAgent);
     let closed = false;
     const session: ManagedBrowserSession = {
       browser,
       context,
       page,
+      userAgent,
       async close() {
         if (closed) return;
         closed = true;

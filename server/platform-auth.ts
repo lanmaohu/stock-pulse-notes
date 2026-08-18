@@ -182,6 +182,11 @@ async function hasLoginCookie(state: WebQrState) {
   return hasChangedLoginCookie(cookies, state.initialLoginCookies || {}, specs[state.platform].cookieNames);
 }
 
+function isNavigationRace(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /execution context was destroyed|cannot find context with specified id|frame was detached|most likely because of a navigation/i.test(message);
+}
+
 async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<PlatformQrSession> {
   if (state.status === "confirmed" || state.status === "expired" || state.status === "error") return publicSession(state);
   if (Date.now() >= state.expiresAt) {
@@ -201,7 +206,7 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
       state.status = state.qrElementObserved && !await visibleQr(state) ? "scanned" : "waiting";
       return publicSession(state);
     }
-    const credential = await serializeBrowserCredential(state.platform, browser.context, browser.page);
+    const credential = await serializeBrowserCredential(state.platform, browser.context, browser.userAgent);
     await closeState(state);
     const identity = await platformAdapter(state.platform).checkAccount(credential, signal);
     state.account = upsertPlatformAccount({
@@ -215,8 +220,18 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
     state.qrImageDataUrl = undefined;
     return publicSession(state);
   } catch (error) {
+    // A successful scan redirects the login page. If a platform operation
+    // overlaps that redirect, keep the QR session alive and retry on the next
+    // poll instead of exposing an internal Playwright error to the admin UI.
+    if (isNavigationRace(error) && state.browser && !state.browser.page.isClosed()) {
+      state.status = "scanned";
+      state.error = undefined;
+      return publicSession(state);
+    }
     state.status = "error";
-    state.error = error instanceof Error ? error.message : `${specs[state.platform].label}扫码登录失败。`;
+    state.error = error instanceof PlatformError
+      ? error.message
+      : `${specs[state.platform].label}扫码登录失败，请重新生成二维码后再试。`;
     await closeState(state);
     return publicSession(state);
   }

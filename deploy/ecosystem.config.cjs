@@ -9,7 +9,7 @@ module.exports = {
       min_uptime: "5s",
       max_restarts: 10,
       restart_delay: 1000,
-      max_memory_restart: "64M",
+      max_memory_restart: "192M",
       merge_logs: true
     },
     {

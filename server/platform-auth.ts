@@ -9,6 +9,7 @@ import { openPlatformBrowser, pageChallenge, serializeBrowserCredential, type Ma
 import { platformAdapter } from "./platforms/index.js";
 import { hasChangedLoginCookie, qrUrlFromPayload } from "./platforms/login-state.js";
 import { PlatformError } from "./platforms/types.js";
+import { checkXiaohongshuAccountPage } from "./platforms/xiaohongshu.js";
 
 type WebPlatform = Exclude<Platform, "bilibili">;
 
@@ -229,14 +230,17 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
       state.status = "scanned";
       return publicSession(state);
     }
+    const identity = state.platform === "xiaohongshu"
+      ? await checkXiaohongshuAccountPage(browser.page)
+      : undefined;
     const credential = await serializeBrowserCredential(state.platform, browser.context, browser.userAgent);
     await closeState(state);
-    const identity = await platformAdapter(state.platform).checkAccount(credential, signal);
+    const confirmedIdentity = identity || await platformAdapter(state.platform).checkAccount(credential, signal);
     state.account = upsertPlatformAccount({
       platform: state.platform,
-      externalUserId: identity.externalUserId,
-      displayName: identity.displayName,
-      avatarUrl: identity.avatarUrl,
+      externalUserId: confirmedIdentity.externalUserId,
+      displayName: confirmedIdentity.displayName,
+      avatarUrl: confirmedIdentity.avatarUrl,
       encryptedCredential: encryptCredential(credential)
     });
     state.status = "confirmed";

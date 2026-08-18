@@ -137,6 +137,16 @@ async function currentProfileId(page: Page) {
   return "";
 }
 
+async function waitForCurrentProfileId(page: Page, timeoutMs = 2_500) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const externalId = await currentProfileId(page);
+    if (externalId) return externalId;
+    await page.waitForTimeout(300);
+  } while (Date.now() < deadline);
+  return "";
+}
+
 async function resolveOnPage(page: Page, externalId: string) {
   const payloads = await capturePageJson(page, async () => {
     await page.goto(`${baseUrl}/user/profile/${encodeURIComponent(externalId)}`, { waitUntil: "domcontentloaded" });
@@ -153,20 +163,32 @@ async function resolveOnPage(page: Page, externalId: string) {
   return { platform: "xiaohongshu", externalId, name, profileUrl: `${baseUrl}/user/profile/${encodeURIComponent(externalId)}` } satisfies CreatorCandidate;
 }
 
-async function checkAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity> {
-  return withPlatformBrowser("xiaohongshu", credential, async ({ page }) => {
-    if (!await cookiesLoggedIn(page)) throw new PlatformError("auth_required", "小红书登录状态已失效，请重新扫码绑定。");
-    const payloads = await capturePageJson(page, async () => {
-      await page.goto(`${baseUrl}/explore`, { waitUntil: "domcontentloaded" });
-    }, (url) => /\/user\/(?:selfinfo|me)|otherinfo/i.test(url), 1_200);
-    await assertUsablePage(page, "小红书");
-    const self = parseXiaohongshuUsers(payloads)[0];
-    if (self) return { externalUserId: self.externalId, displayName: self.name, avatarUrl: self.avatarUrl };
-    const externalId = await currentProfileId(page);
-    if (!externalId) throw new PlatformError("platform_error", "无法读取当前小红书账号，请重新扫码绑定。");
+export async function checkXiaohongshuAccountPage(page: Page): Promise<PlatformAccountIdentity> {
+  if (!await cookiesLoggedIn(page)) throw new PlatformError("auth_required", "小红书登录状态已失效，请重新扫码绑定。");
+
+  // The original QR page contains the authoritative "我" profile link after
+  // login. Prefer it before reopening /explore, which can omit the account
+  // navigation while its client application is still hydrating.
+  let externalId = await waitForCurrentProfileId(page);
+  if (externalId) {
     const candidate = await resolveOnPage(page, externalId);
     return { externalUserId: candidate.externalId, displayName: candidate.name, avatarUrl: candidate.avatarUrl };
-  }, signal);
+  }
+
+  const payloads = await capturePageJson(page, async () => {
+    await page.goto(`${baseUrl}/explore`, { waitUntil: "domcontentloaded" });
+  }, (url) => /\/user\/(?:selfinfo|me)|otherinfo/i.test(url), 2_500);
+  await assertUsablePage(page, "小红书");
+  const self = parseXiaohongshuUsers(payloads)[0];
+  if (self) return { externalUserId: self.externalId, displayName: self.name, avatarUrl: self.avatarUrl };
+  externalId = await waitForCurrentProfileId(page, 3_000);
+  if (!externalId) throw new PlatformError("platform_error", "无法读取当前小红书账号，请重新扫码绑定。");
+  const candidate = await resolveOnPage(page, externalId);
+  return { externalUserId: candidate.externalId, displayName: candidate.name, avatarUrl: candidate.avatarUrl };
+}
+
+async function checkAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity> {
+  return withPlatformBrowser("xiaohongshu", credential, ({ page }) => checkXiaohongshuAccountPage(page), signal);
 }
 
 async function searchCreators(query: string, credential: string, signal?: AbortSignal) {

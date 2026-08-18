@@ -1,6 +1,18 @@
 module.exports = {
   apps: [
     {
+      name: "stockpulse-xvfb",
+      script: "/usr/bin/Xvfb",
+      interpreter: "none",
+      args: ":99 -screen 0 1440x960x24 -nolisten tcp -noreset",
+      autorestart: true,
+      min_uptime: "5s",
+      max_restarts: 10,
+      restart_delay: 1000,
+      max_memory_restart: "64M",
+      merge_logs: true
+    },
+    {
       name: "stockpulse",
       cwd: "/opt/stockpulse/current",
       script: "dist-server/server/index.js",

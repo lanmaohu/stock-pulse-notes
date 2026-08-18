@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
-import type { Locator } from "playwright-core";
+import type { Locator, Response as PlaywrightResponse } from "playwright-core";
+import QRCode from "qrcode";
 import type { Platform, PlatformQrSession } from "../shared/types.js";
 import { cancelBilibiliQrSession, createBilibiliQrSession, pollBilibiliQrSession } from "./bilibili-auth.js";
 import { assertCredentialEncryptionConfigured, encryptCredential } from "./credentials.js";
 import { upsertPlatformAccount } from "./repositories/platform.js";
 import { openPlatformBrowser, pageChallenge, serializeBrowserCredential, type ManagedBrowserSession } from "./platforms/browser.js";
 import { platformAdapter } from "./platforms/index.js";
+import { hasChangedLoginCookie, qrUrlFromPayload } from "./platforms/login-state.js";
 import { PlatformError } from "./platforms/types.js";
 
 type WebPlatform = Exclude<Platform, "bilibili">;
@@ -19,6 +21,8 @@ interface WebQrState {
   account?: PlatformQrSession["account"];
   error?: string;
   browser?: ManagedBrowserSession;
+  initialLoginCookies?: Record<string, string>;
+  qrElementObserved?: boolean;
   polling?: Promise<PlatformQrSession>;
   expiryTimer?: ReturnType<typeof setTimeout>;
 }
@@ -28,14 +32,22 @@ const sessions = new Map<string, WebQrState>();
 const specs = {
   douyin: {
     label: "抖音",
-    url: "https://www.douyin.com/",
-    cookieNames: ["sessionid", "sessionid_ss", "sid_guard", "passport_auth_status"],
-    qrSelectors: ["[class*='qrcode'] canvas", "[class*='qrcode'] img", "[class*='login'] canvas", "[class*='login'] img[src*='data:image']"]
+    url: "https://creator.douyin.com/",
+    cookieNames: ["sessionid", "sessionid_ss", "sid_guard", "passport_auth_status", "LOGIN_STATUS"],
+    qrResponsePath: "/passport/web/get_qrcode/",
+    qrSelectors: [
+      "#animate_qrcode_container img",
+      "#douyin_login_landing_flat_container [class*='qrcode'] canvas",
+      "#douyin_login_landing_flat_container [class*='qrcode'] img",
+      "#douyin_login_landing_flat_container canvas",
+      "#douyin_login_landing_flat_container img"
+    ]
   },
   xiaohongshu: {
     label: "小红书",
-    url: "https://www.xiaohongshu.com/explore",
+    url: "https://www.xiaohongshu.com/login",
     cookieNames: ["web_session"],
+    qrResponsePath: "/api/sns/web/v1/login/qrcode/create",
     qrSelectors: [".qrcode-img", ".login-container [class*='qrcode'] img", ".login-container canvas", "[class*='qrcode'] img"]
   }
 } as const;
@@ -84,6 +96,38 @@ async function screenshotQr(locator: Locator) {
   return `data:image/png;base64,${image.toString("base64")}`;
 }
 
+async function loginCookieSnapshot(state: WebQrState) {
+  const context = state.browser?.context;
+  if (!context) return {};
+  const accepted = specs[state.platform].cookieNames as readonly string[];
+  return Object.fromEntries((await context.cookies())
+    .filter((cookie) => accepted.includes(cookie.name))
+    .map((cookie) => [cookie.name, cookie.value]));
+}
+
+async function waitForQr(state: WebQrState, capturedQrUrl: () => string | undefined, challengeSeen: () => boolean) {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    if (challengeSeen() || await pageChallenge(state.browser!.page)) {
+      throw new PlatformError("rate_limited", `${specs[state.platform].label}触发了安全验证，当前服务器网络无法生成登录二维码。`);
+    }
+    const locator = await visibleQr(state);
+    if (locator) return { image: await screenshotQr(locator), elementObserved: true };
+    const qrUrl = capturedQrUrl();
+    if (qrUrl) {
+      return {
+        image: await QRCode.toDataURL(qrUrl, { width: 260, margin: 1, errorCorrectionLevel: "M" }),
+        elementObserved: false
+      };
+    }
+    await state.browser!.page.waitForTimeout(250);
+  }
+  if (state.platform === "douyin") {
+    throw new PlatformError("rate_limited", "抖音未向当前服务器网络返回登录二维码；请稍后重试或配置可用的平台浏览器代理。");
+  }
+  throw new PlatformError("platform_error", "未能读取小红书登录二维码，平台页面结构可能已变化。");
+}
+
 async function createWebQrSession(platform: WebPlatform, signal?: AbortSignal): Promise<PlatformQrSession> {
   assertCredentialEncryptionConfigured();
   cleanSessions();
@@ -93,13 +137,29 @@ async function createWebQrSession(platform: WebPlatform, signal?: AbortSignal): 
   };
   try {
     const { page } = browser;
+    let qrUrl: string | undefined;
+    let sawChallenge = false;
+    const responseListener = (response: PlaywrightResponse) => {
+      let pathname = "";
+      try { pathname = new URL(response.url()).pathname; } catch { return; }
+      if (/\/passport\/web\/challenge\/?$|\/website-login\/(?:error|captcha)/i.test(pathname)) sawChallenge = true;
+      if (pathname !== specs[platform].qrResponsePath) return;
+      void response.json()
+        .then((payload) => { qrUrl = qrUrlFromPayload(platform, payload); })
+        .catch(() => undefined);
+    };
+    page.on("response", responseListener);
     await page.goto(specs[platform].url, { waitUntil: "domcontentloaded" });
-    await page.getByText("登录", { exact: true }).first().click({ timeout: 2_000 }).catch(() => undefined);
     await page.waitForTimeout(800);
-    if (await pageChallenge(page)) throw new PlatformError("rate_limited", `${specs[platform].label}触发了安全验证，请稍后重试。`);
-    const qr = await visibleQr(state);
-    if (!qr) throw new PlatformError("platform_error", `未能读取${specs[platform].label}登录二维码，平台页面结构可能已变化。`);
-    state.qrImageDataUrl = await screenshotQr(qr);
+    if (!await visibleQr(state) && !qrUrl) {
+      await page.getByText(platform === "douyin" ? "扫码登录" : "登录", { exact: true })
+        .first().click({ timeout: 2_000, noWaitAfter: true }).catch(() => undefined);
+    }
+    const qr = await waitForQr(state, () => qrUrl, () => sawChallenge);
+    page.off("response", responseListener);
+    state.qrImageDataUrl = qr.image;
+    state.qrElementObserved = qr.elementObserved;
+    state.initialLoginCookies = await loginCookieSnapshot(state);
     sessions.set(state.id, state);
     state.expiryTimer = setTimeout(() => {
       if (state.status !== "waiting" && state.status !== "scanned") return;
@@ -118,8 +178,8 @@ async function createWebQrSession(platform: WebPlatform, signal?: AbortSignal): 
 async function hasLoginCookie(state: WebQrState) {
   const context = state.browser?.context;
   if (!context) return false;
-  const cookies = await context.cookies(specs[state.platform].url);
-  return cookies.some((cookie) => specs[state.platform].cookieNames.some((name) => name === cookie.name) && Boolean(cookie.value));
+  const cookies = await context.cookies();
+  return hasChangedLoginCookie(cookies, state.initialLoginCookies || {}, specs[state.platform].cookieNames);
 }
 
 async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<PlatformQrSession> {
@@ -138,7 +198,7 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
   try {
     if (await pageChallenge(browser.page)) throw new PlatformError("rate_limited", `${specs[state.platform].label}触发了安全验证，请稍后重新绑定。`);
     if (!await hasLoginCookie(state)) {
-      state.status = await visibleQr(state) ? "waiting" : "scanned";
+      state.status = state.qrElementObserved && !await visibleQr(state) ? "scanned" : "waiting";
       return publicSession(state);
     }
     const credential = await serializeBrowserCredential(state.platform, browser.context, browser.page);

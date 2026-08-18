@@ -20,6 +20,34 @@ platform_browser_path() {
   awk -F= '/^PLATFORM_BROWSER_EXECUTABLE_PATH=/ { value=substr($0, index($0, "=")+1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print value; exit }' "$APP_ROOT/.env" 2>/dev/null || true
 }
 
+platform_browser_headless() {
+  local value
+  value="$(awk -F= '/^PLATFORM_BROWSER_HEADLESS=/ { value=substr($0, index($0, "=")+1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print tolower(value); exit }' "$APP_ROOT/.env" 2>/dev/null || true)"
+  if [[ -n "$value" ]]; then printf '%s' "$value"; else printf 'true'; fi
+}
+
+platform_browser_display() {
+  local value
+  value="$(awk -F= '/^PLATFORM_BROWSER_DISPLAY=/ { value=substr($0, index($0, "=")+1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print value; exit }' "$APP_ROOT/.env" 2>/dev/null || true)"
+  if [[ -n "$value" ]]; then printf '%s' "$value"; else printf ':99'; fi
+}
+
+wait_for_virtual_display() {
+  [[ "$(platform_browser_headless)" == "false" ]] || return 0
+  local display number
+  display="$(platform_browser_display)"
+  if [[ "$display" =~ ^:([0-9]+)(\.[0-9]+)?$ ]]; then
+    number="${BASH_REMATCH[1]}"
+    for _ in $(seq 1 20); do
+      [[ -S "/tmp/.X11-unix/X$number" ]] && return 0
+      sleep 0.25
+    done
+    echo "Chromium virtual display $display did not become ready." >&2
+    return 1
+  fi
+  return 0
+}
+
 atomic_link() {
   local target="$1"
   local link="$2"
@@ -36,6 +64,7 @@ start_current() {
   local release
   release="$(basename "$(readlink -f "$APP_ROOT/current")")"
   STOCKPULSE_RELEASE="$release" pm2 startOrReload "$APP_ROOT/current/deploy/ecosystem.config.cjs" --update-env
+  wait_for_virtual_display
 }
 
 wait_until_ready() {
@@ -100,6 +129,7 @@ activate() {
   command -v node >/dev/null
   command -v npm >/dev/null
   command -v pm2 >/dev/null
+  command -v Xvfb >/dev/null
   command -v curl >/dev/null
   command -v rsync >/dev/null
   node -e 'const [major,minor]=process.versions.node.split(".").map(Number); if (major !== 22 || minor < 16) { console.error("Node >=22.16 <23 is required."); process.exit(1); }'

@@ -88,6 +88,39 @@ export function platformBrowserExecutablePath() {
   return path.resolve(executable);
 }
 
+export function platformBrowserHeadless() {
+  const configured = process.env.PLATFORM_BROWSER_HEADLESS?.trim().toLowerCase();
+  if (!configured) return true;
+  if (configured === "true") return true;
+  if (configured === "false") return false;
+  throw new Error("PLATFORM_BROWSER_HEADLESS must be true or false.");
+}
+
+export function platformBrowserDisplay() {
+  return process.env.PLATFORM_BROWSER_DISPLAY?.trim() || process.env.DISPLAY?.trim() || ":99";
+}
+
+export function platformBrowserProxy() {
+  const server = process.env.PLATFORM_BROWSER_PROXY_SERVER?.trim();
+  const username = process.env.PLATFORM_BROWSER_PROXY_USERNAME?.trim();
+  const password = process.env.PLATFORM_BROWSER_PROXY_PASSWORD?.trim();
+  if (!server) {
+    if (username || password) throw new Error("PLATFORM_BROWSER_PROXY_SERVER is required when proxy credentials are configured.");
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(server);
+  } catch {
+    throw new Error("PLATFORM_BROWSER_PROXY_SERVER must be a valid HTTP, HTTPS, or SOCKS5 URL.");
+  }
+  if (!/^https?:$|^socks5:$/.test(parsed.protocol) || !parsed.hostname || !parsed.port || parsed.username || parsed.password) {
+    throw new Error("PLATFORM_BROWSER_PROXY_SERVER must be an HTTP, HTTPS, or SOCKS5 URL without embedded credentials.");
+  }
+  if (password && !username) throw new Error("PLATFORM_BROWSER_PROXY_USERNAME is required when a proxy password is configured.");
+  return { server, username, password };
+}
+
 function integerEnvironment(name: string, fallback: number, minimum: number, maximum: number) {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;
@@ -145,11 +178,15 @@ function validateSharedSecrets() {
 
 export function validateApiEnvironment() {
   apiPort();
+  platformBrowserHeadless();
+  platformBrowserProxy();
   validateSharedSecrets();
   requiredSecret("WEBHOOK_TOKEN");
 }
 
 export function validateWorkerEnvironment() {
+  platformBrowserHeadless();
+  platformBrowserProxy();
   validateSharedSecrets();
   requiredSecret("DEEPSEEK_API_KEY");
   aiConfig();

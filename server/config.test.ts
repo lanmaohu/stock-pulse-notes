@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import path from "node:path";
-import { apiPort, backupConfig, databasePath } from "./config.js";
+import { apiPort, backupConfig, databasePath, platformBrowserHeadless, platformBrowserProxy } from "./config.js";
 
 test("API port validation rejects malformed and out-of-range values", () => {
   const previous = process.env.PORT;
@@ -47,5 +47,38 @@ test("backup settings validate schedule and retention bounds", () => {
     else process.env.BACKUP_LOCAL_TIME = previousTime;
     if (previousRetention === undefined) delete process.env.BACKUP_RETENTION_DAYS;
     else process.env.BACKUP_RETENTION_DAYS = previousRetention;
+  }
+});
+
+test("platform browser mode and optional proxy are validated", () => {
+  const previousHeadless = process.env.PLATFORM_BROWSER_HEADLESS;
+  const previousServer = process.env.PLATFORM_BROWSER_PROXY_SERVER;
+  const previousUsername = process.env.PLATFORM_BROWSER_PROXY_USERNAME;
+  const previousPassword = process.env.PLATFORM_BROWSER_PROXY_PASSWORD;
+  try {
+    process.env.PLATFORM_BROWSER_HEADLESS = "false";
+    assert.equal(platformBrowserHeadless(), false);
+    process.env.PLATFORM_BROWSER_HEADLESS = "sometimes";
+    assert.throws(() => platformBrowserHeadless(), /true or false/);
+
+    process.env.PLATFORM_BROWSER_PROXY_SERVER = "http://proxy.example:8080";
+    process.env.PLATFORM_BROWSER_PROXY_USERNAME = "collector";
+    delete process.env.PLATFORM_BROWSER_PROXY_PASSWORD;
+    assert.deepEqual(platformBrowserProxy(), {
+      server: "http://proxy.example:8080",
+      username: "collector",
+      password: undefined
+    });
+    process.env.PLATFORM_BROWSER_PROXY_SERVER = "http://user:secret@proxy.example:8080";
+    assert.throws(() => platformBrowserProxy(), /without embedded credentials/);
+  } finally {
+    if (previousHeadless === undefined) delete process.env.PLATFORM_BROWSER_HEADLESS;
+    else process.env.PLATFORM_BROWSER_HEADLESS = previousHeadless;
+    if (previousServer === undefined) delete process.env.PLATFORM_BROWSER_PROXY_SERVER;
+    else process.env.PLATFORM_BROWSER_PROXY_SERVER = previousServer;
+    if (previousUsername === undefined) delete process.env.PLATFORM_BROWSER_PROXY_USERNAME;
+    else process.env.PLATFORM_BROWSER_PROXY_USERNAME = previousUsername;
+    if (previousPassword === undefined) delete process.env.PLATFORM_BROWSER_PROXY_PASSWORD;
+    else process.env.PLATFORM_BROWSER_PROXY_PASSWORD = previousPassword;
   }
 });

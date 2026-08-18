@@ -1,7 +1,13 @@
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright-core";
 import { chromium } from "playwright-core";
 import type { Platform } from "../../shared/types.js";
-import { platformBrowserExecutablePath } from "../config.js";
+import {
+  platformBrowserDisplay,
+  platformBrowserExecutablePath,
+  platformBrowserHeadless,
+  platformBrowserProxy
+} from "../config.js";
+import { pageLooksChallenged } from "./login-state.js";
 import { PlatformError } from "./types.js";
 
 interface BrowserStorageState {
@@ -92,20 +98,28 @@ export async function openPlatformBrowser(
   let browser: Browser | undefined;
   try {
     const envelope = credential ? parseBrowserCredential(platform, credential) : undefined;
+    const headless = platformBrowserHeadless();
     browser = await chromium.launch({
       executablePath: platformBrowserExecutablePath(),
-      headless: true,
+      headless,
       timeout: 6_000,
-      args: ["--disable-dev-shm-usage"]
+      proxy: platformBrowserProxy(),
+      env: headless ? process.env : { ...process.env, DISPLAY: platformBrowserDisplay() },
+      args: ["--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
     });
     const options: BrowserContextOptions = {
       locale: "zh-CN",
       timezoneId: "Asia/Shanghai",
       viewport: { width: 1440, height: 960 },
+      screen: { width: 1440, height: 960 },
+      colorScheme: "light",
       userAgent: envelope?.userAgent,
       storageState: envelope?.storageState
     };
     const context = await browser.newContext(options);
+    await context.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "webdriver", { configurable: true, get: () => undefined });
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(20_000);
     page.setDefaultNavigationTimeout(13_000);
@@ -168,6 +182,11 @@ export async function closePlatformBrowsers() {
 }
 
 export async function pageChallenge(page: Page) {
-  const text = (await page.locator("body").innerText({ timeout: 3_000 }).catch(() => "")).slice(0, 4_000);
-  return /安全验证|完成验证|访问频繁|操作频繁|滑块验证|captcha|verify/i.test(text);
+  const [title, text, hasChallengeElement] = await Promise.all([
+    page.title().catch(() => ""),
+    page.locator("body").innerText({ timeout: 3_000 }).catch(() => ""),
+    page.locator("iframe[src*='verify'], iframe[src*='captcha'], [id*='captcha'], [class*='captcha']")
+      .first().isVisible().catch(() => false)
+  ]);
+  return pageLooksChallenged({ title, url: page.url(), text: text.slice(0, 4_000), hasChallengeElement });
 }

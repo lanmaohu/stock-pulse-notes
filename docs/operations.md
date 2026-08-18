@@ -19,7 +19,7 @@
 服务器必须安装：
 
 - Node.js `>=22.16 <23`、npm；
-- Chromium（Ubuntu/Debian 通常可通过 `sudo apt-get install chromium` 安装），并在 `.env` 中将 `PLATFORM_BROWSER_EXECUTABLE_PATH` 指向实际可执行文件；
+- Chromium 与 Xvfb（Ubuntu/Debian 通常可安装 `chromium xvfb`，Alibaba Cloud Linux 可安装 `xorg-x11-server-Xvfb xorg-x11-xauth`），并在 `.env` 中将 `PLATFORM_BROWSER_EXECUTABLE_PATH` 指向实际可执行文件；
 - PM2、Nginx、curl、rsync；
 - Linux `flock`（通常由 `util-linux` 提供）。
 
@@ -37,7 +37,17 @@ chmod 600 /opt/stockpulse/.env
 
 编辑 `/opt/stockpulse/.env`，确保所有占位秘密均已替换。`PLATFORM_CREDENTIALS_KEY` 一旦用于加密平台凭据，不得随意更换；更换后必须重新扫码绑定三个平台账号。
 
-抖音、小红书采集会短时启动无界面 Chromium。生产机建议至少预留 1 GB 可用内存；发布脚本会在停服前检查浏览器路径，`doctor` 也会报告浏览器状态。
+抖音、小红书采集会短时启动虚拟显示中的 Chromium。生产环境设置 `PLATFORM_BROWSER_HEADLESS=false`、`PLATFORM_BROWSER_DISPLAY=:99`；PM2 会维护 `stockpulse-xvfb`，发布脚本会在停服前检查 Chromium 与 Xvfb，`doctor` 会验证显示套接字。建议至少预留 1 GB 可用内存。
+
+服务器出口 IP 被平台明确限制时，可选配置一个固定代理：
+
+```bash
+PLATFORM_BROWSER_PROXY_SERVER=http://proxy.example:8080
+PLATFORM_BROWSER_PROXY_USERNAME=collector
+PLATFORM_BROWSER_PROXY_PASSWORD=replace-with-secret
+```
+
+代理凭据不得嵌入 URL，也不得写入日志。该配置只提供单一浏览器出口，不实现代理池或验证码自动处理。
 
 在第一次发布成功、`/opt/stockpulse/current` 已存在后安装 Nginx 配置：
 
@@ -207,7 +217,7 @@ Worker 正常退出会释放当前租约，未完成 item 回到 queued。不要
 
 ### 抖音或小红书账号失效、触发风控
 
-后台显示 `needs_reauth` 时重新扫码绑定。出现安全验证、访问频繁或页面结构变化时，不要连续重试；先用同一服务器网络在普通浏览器确认平台可访问，等待风控解除后再检查。Chromium、Cookie、storage state、二维码令牌和采集正文都不得写入日志或聊天。
+后台显示 `needs_reauth` 时重新扫码绑定。出现安全验证或访问频繁时，不要连续重试；先确认 `doctor` 的浏览器模式为 `virtual-display`。若平台仍明确拒绝服务器出口 IP，等待风控解除或配置一个经过授权的固定代理后再检查。Chromium、Cookie、storage state、二维码令牌、代理密码和采集正文都不得写入日志或聊天。
 
 ### SQLite locked、损坏或磁盘不足
 

@@ -66,6 +66,12 @@ DEEPSEEK_API_KEY=your-deepseek-api-key
 BILIBILI_COLLECT_CRON_TIME=07:30
 BILIBILI_COOKIE=
 PLATFORM_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+PLATFORM_BROWSER_HEADLESS=false
+PLATFORM_BROWSER_DISPLAY=:99
+# 可选：单一平台浏览器代理（凭据不要写进 URL）
+PLATFORM_BROWSER_PROXY_SERVER=
+PLATFORM_BROWSER_PROXY_USERNAME=
+PLATFORM_BROWSER_PROXY_PASSWORD=
 ```
 
 - `SESSION_SECRET` 签名 HttpOnly、SameSite=Strict 会话 Cookie。
@@ -79,6 +85,8 @@ PLATFORM_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 - `BILIBILI_COLLECT_CRON_TIME` 只用于首次初始化，之后由管理后台设置。
 - `BILIBILI_COOKIE` 仅作旧部署回退，正常使用扫码保存的加密凭据。
 - `PLATFORM_BROWSER_EXECUTABLE_PATH` 指向可执行的 Chromium；抖音和小红书使用真实网页会话生成动态签名。
+- 生产环境建议设置 `PLATFORM_BROWSER_HEADLESS=false`，由 PM2 管理的 Xvfb 在 `PLATFORM_BROWSER_DISPLAY` 上提供虚拟显示，避免登录页拒绝无头浏览器。
+- 如果平台明确限制服务器出口 IP，可配置一个固定的 `PLATFORM_BROWSER_PROXY_SERVER`；这是单一出口设置，不包含代理池或验证码处理。
 
 ## 命令
 

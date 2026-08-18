@@ -1,5 +1,15 @@
 import fs from "node:fs";
-import { backupConfig, databasePath, platformBrowserExecutablePath, releaseId, validateApiEnvironment, validateWorkerEnvironment } from "../config.js";
+import {
+  backupConfig,
+  databasePath,
+  platformBrowserDisplay,
+  platformBrowserExecutablePath,
+  platformBrowserHeadless,
+  platformBrowserProxy,
+  releaseId,
+  validateApiEnvironment,
+  validateWorkerEnvironment
+} from "../config.js";
 import { readinessStatus } from "../database/health.js";
 
 export interface DoctorReport {
@@ -7,7 +17,14 @@ export interface DoctorReport {
   release: string;
   node: { status: "ok" | "error"; version: string; required: string };
   configuration: { status: "ok" | "error"; message?: string };
-  browser: { status: "ok" | "error"; executable?: string; message?: string };
+  browser: {
+    status: "ok" | "error";
+    executable?: string;
+    mode?: "headless" | "virtual-display";
+    display?: string;
+    proxyConfigured?: boolean;
+    message?: string;
+  };
   readiness: Awaited<ReturnType<typeof readinessStatus>>;
   disk: { status: "ok" | "warn" | "error"; availableBytes?: number; databaseBytes?: number };
   warnings: string[];
@@ -30,7 +47,19 @@ export async function doctorReport(now = Date.now()): Promise<DoctorReport> {
   const readiness = await readinessStatus(now);
   let browser: DoctorReport["browser"];
   try {
-    browser = { status: "ok", executable: platformBrowserExecutablePath() };
+    const headless = platformBrowserHeadless();
+    const display = headless ? undefined : platformBrowserDisplay();
+    if (display?.startsWith(":")) {
+      const number = display.slice(1).split(".")[0];
+      if (!number || !fs.existsSync(`/tmp/.X11-unix/X${number}`)) throw new Error(`Chromium virtual display ${display} is unavailable.`);
+    }
+    browser = {
+      status: "ok",
+      executable: platformBrowserExecutablePath(),
+      mode: headless ? "headless" : "virtual-display",
+      display,
+      proxyConfigured: Boolean(platformBrowserProxy())
+    };
   } catch (error) {
     browser = { status: "error", message: error instanceof Error ? error.message : String(error) };
   }

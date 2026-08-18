@@ -77,6 +77,7 @@ if [[ "$1" == *"ops.js" && "$2" == "backup" ]]; then echo '{"backupId":"test-bac
 exit 0`);
   writeExecutable(binaryDirectory, "npm", "exit 0");
   writeExecutable(binaryDirectory, "chromium", "exit 0");
+  writeExecutable(binaryDirectory, "Xvfb", "exit 0");
   writeExecutable(binaryDirectory, "flock", "exit 0");
   writeExecutable(binaryDirectory, "pm2", `
 printf '%s\n' "$*" >> "$PM2_TEST_LOG"

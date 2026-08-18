@@ -57,6 +57,14 @@ test("Xiaohongshu response fixtures preserve creator and xsec note identity", ()
   assert.equal(users.length, 1);
   assert.equal(users[0]?.handle, "red-test");
   assert.equal(users[0]?.followerCount, 9876);
+  const selfInfo = parseXiaohongshuUsers({
+    data: { result: { success: true, data: {
+      user_id: "66abcdeffedcba0011223344",
+      nickname: "当前小红书账号",
+      image: "https://example.com/xhs-self-avatar.jpg"
+    } } }
+  });
+  assert.equal(selfInfo[0]?.name, "当前小红书账号");
   const notes = parseXiaohongshuNotes(payload);
   assert.equal(notes.length, 1);
   assert.equal(notes[0]?.xsecToken, "secret-navigation-token");

@@ -132,19 +132,18 @@ async function cookiesLoggedIn(page: Page) {
 }
 
 async function currentProfileId(page: Page) {
-  const selectors = [
-    "a[data-e2e='user-avatar']",
-    "[data-e2e='user-avatar']",
-    "a[data-e2e='nav-user-avatar']",
-    "header a[href*='/user/']",
-    "nav a[href*='/user/']",
-    "a[href*='/user/']"
-  ];
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    const href = await locator.getAttribute("href").catch(() => null)
-      || await locator.locator("xpath=ancestor-or-self::a[1]").getAttribute("href").catch(() => null);
-    const externalId = href ? profileId(href) : "";
+  const links = await page.locator("a[href*='/user/'], [data-e2e='user-avatar']").evaluateAll((elements) => elements.map((element) => {
+    const node = element as unknown as {
+      getAttribute(name: string): string | null;
+      closest(selector: string): { getAttribute(name: string): string | null } | null;
+    };
+    return {
+      href: node.getAttribute("href") || node.closest("a")?.getAttribute("href") || "",
+      isAccountControl: Boolean(node.closest("header, nav") || node.getAttribute("data-e2e")?.includes("user-avatar"))
+    };
+  })).catch(() => []);
+  for (const link of [...links.filter((item) => item.isAccountControl), ...links]) {
+    const externalId = profileId(link.href);
     if (externalId) return externalId;
   }
   return "";

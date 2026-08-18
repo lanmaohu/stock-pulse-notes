@@ -113,18 +113,25 @@ async function cookiesLoggedIn(page: Page) {
 }
 
 async function currentProfileId(page: Page) {
-  const selectors = [
-    "header a[href*='/user/profile/']",
-    "nav a[href*='/user/profile/']",
-    "[class*='user-info'] a[href*='/user/profile/']",
-    "[class*='user-avatar']",
-    "a[href*='/user/profile/']"
+  const links = await page.locator("a[href*='/user/profile/']").evaluateAll((elements) => elements.map((element) => {
+    const node = element as unknown as {
+      getAttribute(name: string): string | null;
+      textContent?: string | null;
+      closest(selector: string): unknown;
+    };
+    return {
+      href: node.getAttribute("href") || "",
+      text: node.textContent?.trim() || "",
+      inNavigation: Boolean(node.closest("header, nav, [class*='sidebar'], [class*='user-info']"))
+    };
+  })).catch(() => []);
+  const ordered = [
+    ...links.filter((link) => link.text === "我"),
+    ...links.filter((link) => link.inNavigation),
+    ...links
   ];
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    const href = await locator.getAttribute("href").catch(() => null)
-      || await locator.locator("xpath=ancestor-or-self::a[1]").getAttribute("href").catch(() => null);
-    const externalId = href ? profileId(href) : "";
+  for (const link of ordered) {
+    const externalId = profileId(link.href);
     if (externalId) return externalId;
   }
   return "";
@@ -149,8 +156,12 @@ async function resolveOnPage(page: Page, externalId: string) {
 async function checkAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity> {
   return withPlatformBrowser("xiaohongshu", credential, async ({ page }) => {
     if (!await cookiesLoggedIn(page)) throw new PlatformError("auth_required", "小红书登录状态已失效，请重新扫码绑定。");
-    await page.goto(`${baseUrl}/explore`, { waitUntil: "domcontentloaded" });
+    const payloads = await capturePageJson(page, async () => {
+      await page.goto(`${baseUrl}/explore`, { waitUntil: "domcontentloaded" });
+    }, (url) => /\/user\/(?:selfinfo|me)|otherinfo/i.test(url), 1_200);
     await assertUsablePage(page, "小红书");
+    const self = parseXiaohongshuUsers(payloads)[0];
+    if (self) return { externalUserId: self.externalId, displayName: self.name, avatarUrl: self.avatarUrl };
     const externalId = await currentProfileId(page);
     if (!externalId) throw new PlatformError("platform_error", "无法读取当前小红书账号，请重新扫码绑定。");
     const candidate = await resolveOnPage(page, externalId);

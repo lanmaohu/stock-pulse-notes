@@ -23,6 +23,7 @@ interface WebQrState {
   browser?: ManagedBrowserSession;
   initialLoginCookies?: Record<string, string>;
   qrElementObserved?: boolean;
+  loginObservedAt?: number;
   polling?: Promise<PlatformQrSession>;
   expiryTimer?: ReturnType<typeof setTimeout>;
 }
@@ -204,6 +205,14 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
     if (await pageChallenge(browser.page)) throw new PlatformError("rate_limited", `${specs[state.platform].label}触发了安全验证，请稍后重新绑定。`);
     if (!await hasLoginCookie(state)) {
       state.status = state.qrElementObserved && !await visibleQr(state) ? "scanned" : "waiting";
+      return publicSession(state);
+    }
+    // Xiaohongshu updates web_session before its post-login redirect and the
+    // remaining account cookies have settled. Keep polling non-blocking while
+    // giving that redirect the same grace period used by maintained clients.
+    state.loginObservedAt ||= Date.now();
+    if (state.platform === "xiaohongshu" && Date.now() - state.loginObservedAt < 5_000) {
+      state.status = "scanned";
       return publicSession(state);
     }
     const credential = await serializeBrowserCredential(state.platform, browser.context, browser.userAgent);

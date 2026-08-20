@@ -131,7 +131,9 @@ function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; on
   const [busyPlatform, setBusyPlatform] = useState<Platform | null>(null);
   const [errors, setErrors] = useState<Partial<Record<Platform, string>>>({});
   useEffect(() => {
-    if (searchParams.get("twitter") === "error") {
+    if (searchParams.get("twitter") === "credits") {
+      setErrors((current) => ({ ...current, twitter: "Twitter/X API 额度不足，请在 X Developer Console 充值后重新授权。" }));
+    } else if (searchParams.get("twitter") === "error") {
       setErrors((current) => ({ ...current, twitter: "Twitter/X 授权失败或已取消，请重新授权。" }));
     }
   }, [searchParams]);

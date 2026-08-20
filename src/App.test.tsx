@@ -255,7 +255,7 @@ describe("application routes", () => {
   });
 
   test("platform accounts page offers QR and OAuth binding for all four sources", async () => {
-    window.history.replaceState({}, "", "/admin/accounts");
+    window.history.replaceState({}, "", "/admin/accounts?twitter=credits");
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/api/auth/session") return json({ authenticated: true });
@@ -270,6 +270,7 @@ describe("application routes", () => {
     expect(screen.getByText("抖音")).toBeInTheDocument();
     expect(screen.getByText("小红书")).toBeInTheDocument();
     expect(screen.getByText("Twitter/X")).toBeInTheDocument();
+    expect(screen.getByText("Twitter/X API 额度不足，请在 X Developer Console 充值后重新授权。")).toBeInTheDocument();
     expect(screen.queryByText("后续版本")).not.toBeInTheDocument();
   });
 });

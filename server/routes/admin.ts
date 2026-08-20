@@ -19,6 +19,7 @@ import {
 import { deletePlatformAccount, listCreators, listPlatformAccounts, upsertPlatformAccount } from "../repositories/platform.js";
 import { getCollectionRun, getCollectionSettings, listCollectionRuns, updateCollectionSettings } from "../repositories/collection.js";
 import { HttpError } from "../http-error.js";
+import { errorFields, log } from "../observability/logger.js";
 import { PlatformError } from "../platforms/types.js";
 import { twitterAdapter } from "../platforms/twitter.js";
 import { completeTwitterOAuthSession, createTwitterOAuthSession } from "../twitter-auth.js";
@@ -81,11 +82,11 @@ adminRouter.post("/platform-accounts/twitter/oauth", (_req, res, next) => {
   }
 });
 
-function oauthReturnPage(res: Response, status: "connected" | "error") {
+function oauthReturnPage(res: Response, status: "connected" | "error" | "credits") {
   const target = `/admin/accounts?twitter=${status}`;
   res.status(200).set({ "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" }).send(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>Twitter/X 授权</title></head>
-<body><p>${status === "connected" ? "Twitter/X 账号已绑定，正在返回管理后台…" : "Twitter/X 授权失败，正在返回管理后台…"}</p>
+<body><p>${status === "connected" ? "Twitter/X 账号已绑定，正在返回管理后台…" : status === "credits" ? "Twitter/X API 额度不足，正在返回管理后台…" : "Twitter/X 授权失败，正在返回管理后台…"}</p>
 <script>window.location.replace(${JSON.stringify(target)})</script><noscript><a href="${target}">返回管理后台</a></noscript></body></html>`);
 }
 
@@ -104,8 +105,10 @@ adminRouter.get("/platform-oauth/twitter/callback", async (req, res) => {
       encryptedCredential: encryptCredential(credential)
     });
     return oauthReturnPage(res, "connected");
-  } catch {
-    return oauthReturnPage(res, "error");
+  } catch (error) {
+    const platformCode = error instanceof PlatformError ? error.code : "unknown";
+    log("error", "twitter_oauth_callback_failed", { platformCode, ...errorFields(error) });
+    return oauthReturnPage(res, platformCode === "rate_limited" ? "credits" : "error");
   }
 });
 

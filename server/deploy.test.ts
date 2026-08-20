@@ -29,6 +29,11 @@ test("deployment shell scripts parse and reject an unsafe application root", () 
   assert.match(unsafe.stderr, /Unsafe/);
 });
 
+test("Xvfb uses a stable working directory across release cleanup", () => {
+  const ecosystem = fs.readFileSync(path.join(workspace, "deploy", "ecosystem.config.cjs"), "utf8");
+  assert.match(ecosystem, /name: "stockpulse-xvfb",\s+cwd: "\/opt\/stockpulse"/);
+});
+
 test("release dry-run uses a clean Git commit without contacting a server", () => {
   const repository = fs.mkdtempSync(path.join(os.tmpdir(), "stockpulse-release-test-"));
   fs.mkdirSync(path.join(repository, "scripts"));

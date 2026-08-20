@@ -2,6 +2,7 @@ module.exports = {
   apps: [
     {
       name: "stockpulse-xvfb",
+      cwd: "/opt/stockpulse",
       script: "/usr/bin/Xvfb",
       interpreter: "none",
       args: ":99 -screen 0 1440x960x24 -nolisten tcp -noreset",

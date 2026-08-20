@@ -248,13 +248,13 @@ describe("application routes", () => {
 
     render(<App />);
     await screen.findByText("还没有订阅博主");
-    for (const platform of ["B站", "抖音", "小红书"]) expect(screen.getByRole("button", { name: new RegExp(platform) })).toBeInTheDocument();
+    for (const platform of ["B站", "抖音", "小红书", "Twitter/X"]) expect(screen.getByRole("button", { name: new RegExp(platform) })).toBeInTheDocument();
     await waitFor(() => expect(requests).toContain("/api/creators"));
     expect(requests).not.toContain("/api/collection-runs");
     expect(requests).not.toContain("/api/collection-settings");
   });
 
-  test("platform accounts page offers binding for all three sources", async () => {
+  test("platform accounts page offers QR and OAuth binding for all four sources", async () => {
     window.history.replaceState({}, "", "/admin/accounts");
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
@@ -265,9 +265,11 @@ describe("application routes", () => {
 
     render(<App />);
     expect((await screen.findAllByRole("button", { name: "扫码绑定" })).length).toBe(3);
+    expect(screen.getByRole("button", { name: "授权绑定" })).toBeInTheDocument();
     expect(screen.getByText("B站")).toBeInTheDocument();
     expect(screen.getByText("抖音")).toBeInTheDocument();
     expect(screen.getByText("小红书")).toBeInTheDocument();
+    expect(screen.getByText("Twitter/X")).toBeInTheDocument();
     expect(screen.queryByText("后续版本")).not.toBeInTheDocument();
   });
 });

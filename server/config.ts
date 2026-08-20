@@ -19,6 +19,12 @@ export interface BackupConfig {
   minimumCount: number;
 }
 
+export interface TwitterOAuthConfig {
+  clientId: string;
+  clientSecret?: string;
+  callbackUrl: string;
+}
+
 let loaded = false;
 
 export function loadEnvironment() {
@@ -119,6 +125,26 @@ export function platformBrowserProxy() {
   }
   if (password && !username) throw new Error("PLATFORM_BROWSER_PROXY_USERNAME is required when a proxy password is configured.");
   return { server, username, password };
+}
+
+export function twitterOAuthConfig(): TwitterOAuthConfig {
+  const clientId = process.env.TWITTER_CLIENT_ID?.trim();
+  const clientSecret = process.env.TWITTER_CLIENT_SECRET?.trim() || undefined;
+  const callbackUrl = process.env.TWITTER_OAUTH_CALLBACK_URL?.trim();
+  if (!clientId || !callbackUrl) {
+    throw new Error("TWITTER_CLIENT_ID 和 TWITTER_OAUTH_CALLBACK_URL 尚未配置。");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(callbackUrl);
+  } catch {
+    throw new Error("TWITTER_OAUTH_CALLBACK_URL 必须是有效的 HTTPS URL。");
+  }
+  const local = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+  if ((!local && parsed.protocol !== "https:") || (local && !/^https?:$/.test(parsed.protocol))) {
+    throw new Error("TWITTER_OAUTH_CALLBACK_URL 必须使用 HTTPS（本地 localhost 可使用 HTTP）。");
+  }
+  return { clientId, clientSecret, callbackUrl: parsed.toString() };
 }
 
 function integerEnvironment(name: string, fallback: number, minimum: number, maximum: number) {

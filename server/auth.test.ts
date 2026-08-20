@@ -200,6 +200,7 @@ test("every management operation rejects anonymous and viewer sessions before ha
   const protectedRequests: Array<[string, RequestInit?]> = [
     ["/api/platform-accounts"],
     ["/api/platform-accounts/bilibili/qr", { method: "POST" }],
+    ["/api/platform-accounts/twitter/oauth", { method: "POST" }],
     ["/api/platform-accounts/bilibili/qr/missing"],
     ["/api/platform-accounts/douyin/qr/missing", { method: "DELETE" }],
     ["/api/platform-accounts/missing/check", { method: "POST" }],
@@ -218,6 +219,10 @@ test("every management operation rejects anonymous and viewer sessions before ha
     const response = await fetch(`${baseUrl}${path}`, init);
     assert.equal(response.status, 401, `${init?.method || "GET"} ${path}`);
   }
+
+  const oauthCallback = await fetch(`${baseUrl}/api/platform-oauth/twitter/callback?error=access_denied`);
+  assert.equal(oauthCallback.status, 200);
+  assert.match(oauthCallback.headers.get("content-type") || "", /^text\/html/);
 
   const viewerLogin = await fetch(`${baseUrl}/api/portfolio/session`, {
     method: "POST",

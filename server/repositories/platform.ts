@@ -110,6 +110,15 @@ export function deletePlatformAccount(id: string) {
   return Number(database().prepare("DELETE FROM platform_accounts WHERE id = ?").run(id).changes) > 0;
 }
 
+export function replacePlatformAccountCredential(platform: Platform, encryptedCredential: string) {
+  const result = database().prepare(`
+    UPDATE platform_accounts
+    SET credentialsCiphertext = ?, updatedAt = ?
+    WHERE platform = ?
+  `).run(encryptedCredential, new Date().toISOString(), platform);
+  return Number(result.changes) > 0;
+}
+
 export function listCreators(options: { enabledOnly?: boolean; ids?: string[] } = {}): Creator[] {
   const clauses: string[] = [];
   const values: Array<string | number> = [];

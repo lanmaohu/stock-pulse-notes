@@ -271,6 +271,7 @@ a { color: inherit; }
 .platform-badge.bilibili { color: #b33568; background: #fbeaf1; }
 .platform-badge.douyin { color: #172124; background: #e7f4f4; }
 .platform-badge.xiaohongshu { color: #b62f2f; background: #fdebea; }
+.platform-badge.twitter { color: #f4f7f8; background: #172124; }
 .content-title { display: inline-flex; max-width: 100%; align-items: flex-start; gap: 6px; margin: 11px 0 10px; color: #182328; font-size: 18px; font-weight: 760; line-height: 1.38; text-decoration: none; overflow-wrap: anywhere; }
 .content-title svg { flex: 0 0 auto; margin-top: 5px; color: #718087; }
 .content-title:hover { color: #1f645d; }
@@ -360,6 +361,7 @@ a { color: inherit; }
 .platform-icon.bilibili { color: #b52f68; background: #fbe8f0; }
 .platform-icon.douyin { color: #151b1e; background: #e7f4f4; box-shadow: inset 3px 0 #1fc7cb, inset -3px 0 #f25170; }
 .platform-icon.xiaohongshu { color: #c83231; background: #fdebea; }
+.platform-icon.twitter { color: #fff; background: #172124; }
 .platform-icon.mini { width: 25px; height: 25px; border-radius: 5px; }
 .platform-icon.mini svg { width: 15px; height: 15px; }
 .account-avatar-spacer { width: 40px; height: 40px; }
@@ -370,7 +372,7 @@ a { color: inherit; }
 .row-actions { display: flex; align-items: center; gap: 7px; }
 .roadmap-badge { border: 1px solid #d9dfdc; border-radius: 5px; padding: 5px 8px; color: #7c8589; background: #f6f7f6; font-size: 11px; font-weight: 750; }
 
-.platform-selector { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.platform-selector { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .platform-selector button { display: flex; min-width: 0; align-items: center; justify-content: center; gap: 7px; border: 1px solid #d5ddda; border-radius: 7px; padding: 7px 9px; color: #647077; background: #fff; font-size: 13px; font-weight: 760; }
 .platform-selector button:hover { border-color: #9eb3ab; background: #f6f9f7; }
 .platform-selector button.selected { border-color: #2a7068; color: #205d56; background: #eef6f2; box-shadow: inset 0 0 0 1px #2a7068; }
@@ -489,6 +491,7 @@ a { color: inherit; }
   .pagination-pages button { width: 32px; height: 32px; }
   .pagination-ellipsis { width: 18px; }
   .creator-search { grid-template-columns: 1fr; }
+  .platform-selector { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .creator-search .primary-button { width: 100%; }
   .candidate-row { grid-template-columns: auto minmax(0, 1fr) auto; }
   .candidate-row .secondary-button { grid-column: 2 / 4; width: 100%; }

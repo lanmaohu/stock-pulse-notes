@@ -7,6 +7,7 @@ import type {
   PlatformAccountsResponse
 } from "../../shared/types.js";
 import { requireAdmin } from "../auth.js";
+import { encryptCredential } from "../credentials.js";
 import { cancelPlatformQrSession, createPlatformQrSession, pollPlatformQrSession } from "../platform-auth.js";
 import {
   checkPlatformAccount,
@@ -15,10 +16,12 @@ import {
   subscribeCreator,
   updateCreatorSubscription
 } from "../collector.js";
-import { deletePlatformAccount, listCreators, listPlatformAccounts } from "../repositories/platform.js";
+import { deletePlatformAccount, listCreators, listPlatformAccounts, upsertPlatformAccount } from "../repositories/platform.js";
 import { getCollectionRun, getCollectionSettings, listCollectionRuns, updateCollectionSettings } from "../repositories/collection.js";
 import { HttpError } from "../http-error.js";
 import { PlatformError } from "../platforms/types.js";
+import { twitterAdapter } from "../platforms/twitter.js";
+import { completeTwitterOAuthSession, createTwitterOAuthSession } from "../twitter-auth.js";
 import { platformValue, routeParam } from "../validation.js";
 
 export const adminRouter = Router();
@@ -68,6 +71,42 @@ adminRouter.use((req, res, next) => {
 
 adminRouter.get("/platform-accounts", (_req, res: Response<PlatformAccountsResponse>) => {
   res.json({ accounts: listPlatformAccounts() });
+});
+
+adminRouter.post("/platform-accounts/twitter/oauth", (_req, res, next) => {
+  try {
+    res.status(201).json(createTwitterOAuthSession());
+  } catch (error) {
+    next(platformHttpError(error, "无法开始 Twitter/X 授权。", "PLATFORM_OAUTH_FAILED"));
+  }
+});
+
+function oauthReturnPage(res: Response, status: "connected" | "error") {
+  const target = `/admin/accounts?twitter=${status}`;
+  res.status(200).set({ "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" }).send(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>Twitter/X 授权</title></head>
+<body><p>${status === "connected" ? "Twitter/X 账号已绑定，正在返回管理后台…" : "Twitter/X 授权失败，正在返回管理后台…"}</p>
+<script>window.location.replace(${JSON.stringify(target)})</script><noscript><a href="${target}">返回管理后台</a></noscript></body></html>`);
+}
+
+adminRouter.get("/platform-oauth/twitter/callback", async (req, res) => {
+  const state = typeof req.query.state === "string" ? req.query.state.slice(0, 200) : "";
+  const code = typeof req.query.code === "string" ? req.query.code.slice(0, 4_096) : "";
+  if (!state || !code || req.query.error) return oauthReturnPage(res, "error");
+  try {
+    const credential = await completeTwitterOAuthSession(state, code);
+    const identity = await twitterAdapter.checkAccount(credential);
+    upsertPlatformAccount({
+      platform: "twitter",
+      externalUserId: identity.externalUserId,
+      displayName: identity.displayName,
+      avatarUrl: identity.avatarUrl,
+      encryptedCredential: encryptCredential(credential)
+    });
+    return oauthReturnPage(res, "connected");
+  } catch {
+    return oauthReturnPage(res, "error");
+  }
 });
 
 adminRouter.post("/platform-accounts/:platform/qr", async (req, res, next) => {

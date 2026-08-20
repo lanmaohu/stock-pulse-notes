@@ -53,7 +53,13 @@ export function enqueueCollection(trigger: CollectionRunTrigger, creatorIds?: st
   const eligible = creators.filter((creator) => connected.has(creator.platform));
   if (creatorIds?.length && eligible.length !== creators.length) {
     const unavailable = creators.find((creator) => !connected.has(creator.platform));
-    const label = unavailable?.platform === "bilibili" ? "B 站" : unavailable?.platform === "douyin" ? "抖音" : "小红书";
+    const label = unavailable?.platform === "bilibili"
+      ? "B 站"
+      : unavailable?.platform === "douyin"
+        ? "抖音"
+        : unavailable?.platform === "xiaohongshu"
+          ? "小红书"
+          : "Twitter/X";
     throw new Error(`${label}账号未连接，无法采集该博主。`);
   }
   if (!eligible.length) throw new Error("没有可采集的已连接平台博主。");

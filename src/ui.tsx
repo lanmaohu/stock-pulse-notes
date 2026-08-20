@@ -6,7 +6,8 @@ import { publicSecurityFilingUrl, siteConfig } from "./siteConfig";
 export const platformLabel: Record<Platform, string> = {
   bilibili: "B站",
   douyin: "抖音",
-  xiaohongshu: "小红书"
+  xiaohongshu: "小红书",
+  twitter: "Twitter/X"
 };
 
 export const runStatusLabel: Record<CollectionRun["status"], string> = {

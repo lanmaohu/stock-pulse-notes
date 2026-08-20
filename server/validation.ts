@@ -25,6 +25,6 @@ export function positiveIntegerQuery(value: unknown, name: string, fallback: num
 }
 
 export function platformValue(value: unknown): Platform {
-  if (value === "bilibili" || value === "douyin" || value === "xiaohongshu") return value;
+  if (value === "bilibili" || value === "douyin" || value === "xiaohongshu" || value === "twitter") return value;
   throw new HttpError(400, "不支持的平台。", "UNSUPPORTED_PLATFORM");
 }

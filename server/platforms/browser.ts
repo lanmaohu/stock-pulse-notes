@@ -43,7 +43,9 @@ const activeSessions = new Set<ManagedBrowserSession>();
 let browserBusy = false;
 
 function webPlatform(platform: Platform): asserts platform is "douyin" | "xiaohongshu" {
-  if (platform === "bilibili") throw new PlatformError("platform_error", "B 站不使用浏览器会话。");
+  if (platform === "bilibili" || platform === "twitter") {
+    throw new PlatformError("platform_error", `${platform === "twitter" ? "Twitter/X" : "B 站"}不使用浏览器会话。`);
+  }
 }
 
 export function parseBrowserCredential(platform: Platform, credential: string): BrowserCredentialEnvelope {

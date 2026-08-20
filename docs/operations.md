@@ -35,7 +35,7 @@ cp .env.example /opt/stockpulse/.env
 chmod 600 /opt/stockpulse/.env
 ```
 
-编辑 `/opt/stockpulse/.env`，确保所有占位秘密均已替换。`PLATFORM_CREDENTIALS_KEY` 一旦用于加密平台凭据，不得随意更换；更换后必须重新扫码绑定三个平台账号。
+编辑 `/opt/stockpulse/.env`，确保所有占位秘密均已替换。`PLATFORM_CREDENTIALS_KEY` 一旦用于加密平台凭据，不得随意更换；更换后必须重新绑定所有平台账号。
 
 抖音、小红书采集会短时启动虚拟显示中的 Chromium。生产环境设置 `PLATFORM_BROWSER_HEADLESS=false`、`PLATFORM_BROWSER_DISPLAY=:99`；PM2 会维护 `stockpulse-xvfb`，发布脚本会在停服前检查 Chromium 与 Xvfb，`doctor` 会验证显示套接字。建议至少预留 1 GB 可用内存。
 
@@ -48,6 +48,16 @@ PLATFORM_BROWSER_PROXY_PASSWORD=replace-with-secret
 ```
 
 代理凭据不得嵌入 URL，也不得写入日志。该配置只提供单一浏览器出口，不实现代理池或验证码自动处理。
+
+Twitter/X 使用官方开发者应用，不经过 Chromium。在 X Developer Console 创建 OAuth 2.0 Web App，启用只读权限并配置：
+
+```bash
+TWITTER_CLIENT_ID=replace-with-x-client-id
+TWITTER_CLIENT_SECRET=replace-with-x-client-secret
+TWITTER_OAUTH_CALLBACK_URL=https://stockpulse.com.cn/api/platform-oauth/twitter/callback
+```
+
+回调地址必须与 X Developer Console 完全一致。应用只申请 `tweet.read users.read offline.access`；X API 需要账户内有可用读取额度，具体费用由 X Developer Console 结算。Client Secret、访问令牌和刷新令牌不得写入日志或聊天。
 
 在第一次发布成功、`/opt/stockpulse/current` 已存在后安装 Nginx 配置：
 
@@ -218,6 +228,14 @@ Worker 正常退出会释放当前租约，未完成 item 回到 queued。不要
 ### 抖音或小红书账号失效、触发风控
 
 后台显示 `needs_reauth` 时重新扫码绑定。出现安全验证或访问频繁时，不要连续重试；先确认 `doctor` 的浏览器模式为 `virtual-display`。若平台仍明确拒绝服务器出口 IP，等待风控解除或配置一个经过授权的固定代理后再检查。Chromium、Cookie、storage state、二维码令牌、代理密码和采集正文都不得写入日志或聊天。
+
+### Twitter/X 授权或采集失败
+
+- 后台提示未配置：检查三个 `TWITTER_*` 变量以及 X Developer Console 的回调地址；
+- 授权无效：在平台账号页点击“重新授权”；刷新令牌会自动续期并重新加密保存；
+- 读取额度不足：在 X Developer Console 补充 API credits，避免连续重试；
+- 受保护账号：系统只采集公开内容，不支持订阅受保护账号；
+- 解绑只删除本系统内的加密凭据；需要彻底撤销时同时在 X 的已授权应用页面撤销访问。
 
 ### SQLite locked、损坏或磁盘不足
 

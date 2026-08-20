@@ -11,7 +11,7 @@ import { hasChangedLoginCookie, qrUrlFromPayload } from "./platforms/login-state
 import { PlatformError } from "./platforms/types.js";
 import { checkXiaohongshuAccountPage } from "./platforms/xiaohongshu.js";
 
-type WebPlatform = Exclude<Platform, "bilibili">;
+type WebPlatform = Exclude<Platform, "bilibili" | "twitter">;
 
 interface WebQrState {
   id: string;
@@ -266,11 +266,13 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
 
 export async function createPlatformQrSession(platform: Platform, signal?: AbortSignal) {
   if (platform === "bilibili") return createBilibiliQrSession(signal);
+  if (platform === "twitter") throw new PlatformError("platform_error", "Twitter/X 请使用 OAuth 授权绑定。");
   return createWebQrSession(platform, signal);
 }
 
 export async function pollPlatformQrSession(platform: Platform, sessionId: string, signal?: AbortSignal) {
   if (platform === "bilibili") return pollBilibiliQrSession(sessionId, signal);
+  if (platform === "twitter") throw new Error("Twitter/X 不使用二维码会话。");
   const state = sessions.get(sessionId);
   if (!state || state.platform !== platform) throw new Error("二维码会话不存在，请重新生成。");
   if (!state.polling) state.polling = pollWebState(state, signal).finally(() => { state.polling = undefined; });
@@ -279,6 +281,7 @@ export async function pollPlatformQrSession(platform: Platform, sessionId: strin
 
 export async function cancelPlatformQrSession(platform: Platform, sessionId: string) {
   if (platform === "bilibili") return cancelBilibiliQrSession(sessionId);
+  if (platform === "twitter") return false;
   const state = sessions.get(sessionId);
   if (!state || state.platform !== platform) return false;
   sessions.delete(sessionId);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import path from "node:path";
-import { apiPort, backupConfig, databasePath, platformBrowserHeadless, platformBrowserProxy } from "./config.js";
+import { apiPort, backupConfig, databasePath, platformBrowserHeadless, platformBrowserProxy, twitterOAuthConfig } from "./config.js";
 
 test("API port validation rejects malformed and out-of-range values", () => {
   const previous = process.env.PORT;
@@ -80,5 +80,30 @@ test("platform browser mode and optional proxy are validated", () => {
     else process.env.PLATFORM_BROWSER_PROXY_USERNAME = previousUsername;
     if (previousPassword === undefined) delete process.env.PLATFORM_BROWSER_PROXY_PASSWORD;
     else process.env.PLATFORM_BROWSER_PROXY_PASSWORD = previousPassword;
+  }
+});
+
+test("Twitter OAuth configuration requires a secure callback URL", () => {
+  const previousClientId = process.env.TWITTER_CLIENT_ID;
+  const previousSecret = process.env.TWITTER_CLIENT_SECRET;
+  const previousCallback = process.env.TWITTER_OAUTH_CALLBACK_URL;
+  try {
+    process.env.TWITTER_CLIENT_ID = "twitter-client";
+    process.env.TWITTER_CLIENT_SECRET = "twitter-secret";
+    process.env.TWITTER_OAUTH_CALLBACK_URL = "http://stockpulse.example/callback";
+    assert.throws(() => twitterOAuthConfig(), /HTTPS/);
+    process.env.TWITTER_OAUTH_CALLBACK_URL = "https://stockpulse.example/api/platform-oauth/twitter/callback";
+    assert.deepEqual(twitterOAuthConfig(), {
+      clientId: "twitter-client",
+      clientSecret: "twitter-secret",
+      callbackUrl: "https://stockpulse.example/api/platform-oauth/twitter/callback"
+    });
+  } finally {
+    if (previousClientId === undefined) delete process.env.TWITTER_CLIENT_ID;
+    else process.env.TWITTER_CLIENT_ID = previousClientId;
+    if (previousSecret === undefined) delete process.env.TWITTER_CLIENT_SECRET;
+    else process.env.TWITTER_CLIENT_SECRET = previousSecret;
+    if (previousCallback === undefined) delete process.env.TWITTER_OAUTH_CALLBACK_URL;
+    else process.env.TWITTER_OAUTH_CALLBACK_URL = previousCallback;
   }
 });

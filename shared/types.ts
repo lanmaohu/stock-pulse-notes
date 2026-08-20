@@ -8,7 +8,7 @@ export interface ChatMessage {
   createdAt: string;
 }
 
-export type Platform = "bilibili" | "douyin" | "xiaohongshu";
+export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "twitter";
 export type PlatformAccountStatus = "connected" | "needs_reauth" | "checking" | "error";
 
 export interface PlatformAccount {
@@ -283,6 +283,12 @@ export interface PlatformQrSession {
   expiresAt: string;
   account?: PlatformAccount;
   error?: string;
+}
+
+export interface PlatformOAuthStartResponse {
+  platform: "twitter";
+  authorizeUrl: string;
+  expiresAt: string;
 }
 
 export type BilibiliQrStatus = PlatformQrStatus;

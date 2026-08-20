@@ -3,7 +3,12 @@ import { decryptCredential } from "../credentials.js";
 import { getPlatformAccountWithCredential, updatePlatformAccountStatus } from "../repositories/platform.js";
 import { PlatformError } from "../platforms/types.js";
 
-const platformNames: Record<Platform, string> = { bilibili: "B 站", douyin: "抖音", xiaohongshu: "小红书" };
+const platformNames: Record<Platform, string> = {
+  bilibili: "B 站",
+  douyin: "抖音",
+  xiaohongshu: "小红书",
+  twitter: "Twitter/X"
+};
 
 export function platformCredential(platform: Platform) {
   const stored = getPlatformAccountWithCredential(platform);

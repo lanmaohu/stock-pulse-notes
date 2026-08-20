@@ -1,5 +1,5 @@
 import {
-  Activity, AlertTriangle, CheckCircle2, Clock3, ExternalLink, History,
+  Activity, AlertTriangle, AtSign, CheckCircle2, Clock3, ExternalLink, History,
   KeyRound, Link2, LoaderCircle, LogIn, LogOut, Play, Plus, RefreshCw, Search, Settings,
   ShieldCheck, Trash2, UserRoundCheck, Users, Video, X
 } from "lucide-react";
@@ -8,7 +8,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useSearchParam
 import type {
   CollectionRun, CollectionRunsResponse, CollectionSettings,
   CollectionSettingsResponse, Creator, CreatorCandidate, CreatorSearchResponse, CreatorsResponse,
-  Platform, PlatformAccount, PlatformAccountsResponse, PlatformQrSession
+  Platform, PlatformAccount, PlatformAccountsResponse, PlatformOAuthStartResponse, PlatformQrSession
 } from "../shared/types";
 import { useAdminAuth } from "./AdminAuth";
 import { api } from "./api";
@@ -30,15 +30,18 @@ function Loading({ children }: { children: string }) {
   return <div className="route-loading"><LoaderCircle className="spin" size={24} />{children}</div>;
 }
 
-const platforms: Platform[] = ["bilibili", "douyin", "xiaohongshu"];
+const platforms: Platform[] = ["bilibili", "douyin", "xiaohongshu", "twitter"];
 const platformInput: Record<Platform, { hint: string; placeholder: string; idLabel: string }> = {
   bilibili: { hint: "支持主页链接、UID 或博主名称", placeholder: "例如：笨笨的韭菜 或 11473291", idLabel: "UID" },
   douyin: { hint: "支持主页链接、SEC_UID 或博主名称", placeholder: "粘贴抖音主页链接或输入博主名称", idLabel: "SEC_UID" },
-  xiaohongshu: { hint: "支持主页链接、用户 ID 或博主名称", placeholder: "粘贴小红书主页链接或输入博主名称", idLabel: "用户 ID" }
+  xiaohongshu: { hint: "支持主页链接、用户 ID 或博主名称", placeholder: "粘贴小红书主页链接或输入博主名称", idLabel: "用户 ID" },
+  twitter: { hint: "支持 X/Twitter 主页链接、@用户名或账号名称", placeholder: "例如：@elonmusk 或粘贴 x.com 主页链接", idLabel: "账号 ID" }
 };
 
 function PlatformIcon({ platform }: { platform: Platform }) {
-  return platform === "douyin" ? <Activity size={21} /> : <Video size={21} />;
+  if (platform === "douyin") return <Activity size={21} />;
+  if (platform === "twitter") return <AtSign size={21} />;
+  return <Video size={21} />;
 }
 
 function CreatorsView({ creators, connectedPlatforms, onChanged, onRun }: {
@@ -102,7 +105,7 @@ function CreatorsView({ creators, connectedPlatforms, onChanged, onRun }: {
       <div className="section-heading"><div><h2>添加博主</h2><p>{platformInput[platform].hint}</p></div><span className={`platform-badge ${platform}`}>{platformLabel[platform]}</span></div>
       <div className="platform-selector" role="group" aria-label="选择内容平台">{platforms.map((item) => <button type="button" key={item} className={item === platform ? "selected" : ""} onClick={() => changePlatform(item)}><span className={`platform-icon mini ${item}`}><PlatformIcon platform={item} /></span>{platformLabel[item]}{connectedPlatforms.has(item) ? <StatusDot status="good" /> : null}</button>)}</div>
       <form className="creator-search" onSubmit={search}><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={platformInput[platform].placeholder} disabled={!connectedPlatforms.has(platform)} /></div><button className="primary-button compact" type="submit" disabled={!connectedPlatforms.has(platform) || searching || !query.trim()}>{searching ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />}查找</button></form>
-      {!connectedPlatforms.has(platform) ? <div className="inline-notice"><KeyRound size={17} />请先在“平台账号”中扫码绑定{platformLabel[platform]}账号。</div> : null}
+      {!connectedPlatforms.has(platform) ? <div className="inline-notice"><KeyRound size={17} />请先在“平台账号”中{platform === "twitter" ? "授权绑定" : "扫码绑定"}{platformLabel[platform]}账号。</div> : null}
       {error ? <div className="inline-error"><AlertTriangle size={17} />{error}</div> : null}
       {candidates.length ? <div className="candidate-list">{candidates.map((candidate) => {
         const exists = creators.some((creator) => creator.platform === candidate.platform && creator.externalId === candidate.externalId);
@@ -123,9 +126,15 @@ function QrDialog({ session, onClose }: { session: PlatformQrSession; onClose: (
 }
 
 function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; onChanged: () => Promise<void> }) {
+  const [searchParams] = useSearchParams();
   const [qr, setQr] = useState<PlatformQrSession | null>(null);
   const [busyPlatform, setBusyPlatform] = useState<Platform | null>(null);
   const [errors, setErrors] = useState<Partial<Record<Platform, string>>>({});
+  useEffect(() => {
+    if (searchParams.get("twitter") === "error") {
+      setErrors((current) => ({ ...current, twitter: "Twitter/X 授权失败或已取消，请重新授权。" }));
+    }
+  }, [searchParams]);
   useEffect(() => {
     if (!qr || (qr.status !== "waiting" && qr.status !== "scanned")) return;
     const timer = window.setTimeout(async () => {
@@ -139,7 +148,7 @@ function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; on
     }, 1800);
     return () => window.clearTimeout(timer);
   }, [onChanged, qr]);
-  async function connect(platform: Platform) { setBusyPlatform(platform); setErrors((current) => ({ ...current, [platform]: undefined })); try { setQr(await api<PlatformQrSession>(`/api/platform-accounts/${platform}/qr`, { method: "POST" })); } catch (caught) { setErrors((current) => ({ ...current, [platform]: caught instanceof Error ? caught.message : "无法生成二维码。" })); } finally { setBusyPlatform(null); } }
+  async function connect(platform: Platform) { setBusyPlatform(platform); setErrors((current) => ({ ...current, [platform]: undefined })); try { if (platform === "twitter") { const result = await api<PlatformOAuthStartResponse>("/api/platform-accounts/twitter/oauth", { method: "POST" }); window.location.assign(result.authorizeUrl); return; } setQr(await api<PlatformQrSession>(`/api/platform-accounts/${platform}/qr`, { method: "POST" })); } catch (caught) { setErrors((current) => ({ ...current, [platform]: caught instanceof Error ? caught.message : platform === "twitter" ? "无法开始授权。" : "无法生成二维码。" })); } finally { setBusyPlatform(null); } }
   async function check(account: PlatformAccount) { setBusyPlatform(account.platform); setErrors((current) => ({ ...current, [account.platform]: undefined })); try { await api(`/api/platform-accounts/${account.id}/check`, { method: "POST" }); await onChanged(); } catch (caught) { setErrors((current) => ({ ...current, [account.platform]: caught instanceof Error ? caught.message : "账号检查失败。" })); await onChanged(); } finally { setBusyPlatform(null); } }
   async function disconnect(account: PlatformAccount) { if (!window.confirm(`解绑${platformLabel[account.platform]}账号？已采集内容和博主订阅不会删除。`)) return; await api(`/api/platform-accounts/${account.id}`, { method: "DELETE" }); await onChanged(); }
   async function closeQr() { const current = qr; setQr(null); if (current && (current.status === "waiting" || current.status === "scanned")) await api(`/api/platform-accounts/${current.platform}/qr/${current.sessionId}`, { method: "DELETE" }).catch(() => undefined); }
@@ -147,7 +156,7 @@ function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; on
     const account = accounts.find((item) => item.platform === platform);
     const busy = busyPlatform === platform;
     const status = account?.status === "connected" ? "已连接" : account?.status === "checking" ? "检查中" : account?.status === "needs_reauth" ? "需要重新登录" : account?.status === "error" ? "连接异常" : "未连接";
-    return <Fragment key={platform}><div className="account-row available"><div className={`platform-icon ${platform}`}><PlatformIcon platform={platform} /></div>{account ? <Avatar src={account.avatarUrl} name={account.displayName} /> : <span className="account-avatar-spacer" />}<div className="account-name"><strong>{platformLabel[platform]}</strong><span>{account ? `${account.displayName} · ${platformInput[platform].idLabel} ${account.externalUserId}` : "未绑定"}</span></div><div className="account-status"><StatusDot status={account?.status === "connected" ? "good" : account ? "bad" : "idle"} /><span>{status}</span>{account?.lastCheckedAt ? <small>{formatDate(account.lastCheckedAt)}</small> : null}</div>{account ? <div className="row-actions"><button className="secondary-button" onClick={() => void check(account)} disabled={busy}><RefreshCw size={16} />检查</button><button className="secondary-button" onClick={() => void connect(platform)} disabled={busy}><Link2 size={16} />重新绑定</button><button className="icon-button danger" onClick={() => void disconnect(account)} title="解绑账号" aria-label={`解绑${platformLabel[platform]}账号`}><Trash2 size={16} /></button></div> : <button className="primary-button compact" onClick={() => void connect(platform)} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />}扫码绑定</button>}</div>{errors[platform] ? <div className="inline-error"><AlertTriangle size={17} />{errors[platform]}</div> : null}</Fragment>;
+    return <Fragment key={platform}><div className="account-row available"><div className={`platform-icon ${platform}`}><PlatformIcon platform={platform} /></div>{account ? <Avatar src={account.avatarUrl} name={account.displayName} /> : <span className="account-avatar-spacer" />}<div className="account-name"><strong>{platformLabel[platform]}</strong><span>{account ? `${account.displayName} · ${platformInput[platform].idLabel} ${account.externalUserId}` : "未绑定"}</span></div><div className="account-status"><StatusDot status={account?.status === "connected" ? "good" : account ? "bad" : "idle"} /><span>{status}</span>{account?.lastCheckedAt ? <small>{formatDate(account.lastCheckedAt)}</small> : null}</div>{account ? <div className="row-actions"><button className="secondary-button" onClick={() => void check(account)} disabled={busy}><RefreshCw size={16} />检查</button><button className="secondary-button" onClick={() => void connect(platform)} disabled={busy}><Link2 size={16} />{platform === "twitter" ? "重新授权" : "重新绑定"}</button><button className="icon-button danger" onClick={() => void disconnect(account)} title="解绑账号" aria-label={`解绑${platformLabel[platform]}账号`}><Trash2 size={16} /></button></div> : <button className="primary-button compact" onClick={() => void connect(platform)} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />}{platform === "twitter" ? "授权绑定" : "扫码绑定"}</button>}</div>{errors[platform] ? <div className="inline-error"><AlertTriangle size={17} />{errors[platform]}</div> : null}</Fragment>;
   })}{qr ? <QrDialog session={qr} onClose={() => void closeQr()} /> : null}</section>;
 }
 

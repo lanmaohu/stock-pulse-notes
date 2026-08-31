@@ -270,7 +270,8 @@ describe("application routes", () => {
 
     render(<App />);
     await screen.findByText("还没有订阅博主");
-    for (const platform of ["B站", "抖音", "小红书", "Twitter/X"]) expect(screen.getByRole("button", { name: new RegExp(platform) })).toBeInTheDocument();
+    for (const platform of ["B站", "抖音", "小红书"]) expect(screen.getByRole("button", { name: new RegExp(platform) })).toBeInTheDocument();
+    expect(screen.queryByText("Twitter/X")).not.toBeInTheDocument();
     await waitFor(() => expect(requests).toContain("/api/creators"));
     expect(requests).not.toContain("/api/collection-runs");
     expect(requests).not.toContain("/api/collection-settings");
@@ -316,8 +317,8 @@ describe("application routes", () => {
     expect(modelSelect).toHaveValue("deepseek-v4-flash");
   });
 
-  test("platform accounts page offers QR and OAuth binding for all four sources", async () => {
-    window.history.replaceState({}, "", "/admin/accounts?twitter=credits");
+  test("platform accounts page offers QR binding for the three active sources", async () => {
+    window.history.replaceState({}, "", "/admin/accounts");
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/api/auth/session") return json({ authenticated: true });
@@ -327,12 +328,11 @@ describe("application routes", () => {
 
     render(<App />);
     expect((await screen.findAllByRole("button", { name: "扫码绑定" })).length).toBe(3);
-    expect(screen.getByRole("button", { name: "授权绑定" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "授权绑定" })).not.toBeInTheDocument();
     expect(screen.getByText("B站")).toBeInTheDocument();
     expect(screen.getByText("抖音")).toBeInTheDocument();
     expect(screen.getByText("小红书")).toBeInTheDocument();
-    expect(screen.getByText("Twitter/X")).toBeInTheDocument();
-    expect(screen.getByText("Twitter/X API 额度不足，请在 X Developer Console 充值后重新授权。")).toBeInTheDocument();
+    expect(screen.queryByText("Twitter/X")).not.toBeInTheDocument();
     expect(screen.queryByText("后续版本")).not.toBeInTheDocument();
   });
 

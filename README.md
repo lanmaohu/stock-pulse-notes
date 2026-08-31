@@ -24,7 +24,7 @@ Browser -> Nginx -> Express API -> SQLite
                                       |
                                       v
                               Collection Worker
-              Bilibili + Douyin + Xiaohongshu + Twitter/X + DeepSeek
+                    Bilibili + Douyin + Xiaohongshu + DeepSeek
 ```
 
 - API 只处理 HTTP 请求和任务入队。
@@ -71,9 +71,6 @@ PLATFORM_BROWSER_DISPLAY=:99
 PLATFORM_BROWSER_PROXY_SERVER=
 PLATFORM_BROWSER_PROXY_USERNAME=
 PLATFORM_BROWSER_PROXY_PASSWORD=
-TWITTER_CLIENT_ID=
-TWITTER_CLIENT_SECRET=
-TWITTER_OAUTH_CALLBACK_URL=https://stockpulse.com.cn/api/platform-oauth/twitter/callback
 ```
 
 - `SESSION_SECRET` 签名 HttpOnly、SameSite=Strict 会话 Cookie。
@@ -92,8 +89,6 @@ TWITTER_OAUTH_CALLBACK_URL=https://stockpulse.com.cn/api/platform-oauth/twitter/
 - `PLATFORM_BROWSER_EXECUTABLE_PATH` 指向可执行的 Chromium；抖音和小红书使用真实网页会话生成动态签名。
 - 生产环境建议设置 `PLATFORM_BROWSER_HEADLESS=false`，由 PM2 管理的 Xvfb 在 `PLATFORM_BROWSER_DISPLAY` 上提供虚拟显示，避免登录页拒绝无头浏览器。
 - 如果平台明确限制服务器出口 IP，可配置一个固定的 `PLATFORM_BROWSER_PROXY_SERVER`；这是单一出口设置，不包含代理池或验证码处理。
-- Twitter/X 使用官方 OAuth 2.0 PKCE，只申请 `tweet.read`、`users.read`、`offline.access`。在 X Developer Console 中将回调地址设置为与 `TWITTER_OAUTH_CALLBACK_URL` 完全相同；Client ID 必填，Web App 的 Client Secret 填入 `TWITTER_CLIENT_SECRET`。
-- Twitter/X 只搜索和采集公开账号，正文作为 `body` 参与分析；令牌及刷新令牌使用 `PLATFORM_CREDENTIALS_KEY` 加密保存。X API 按开发者账户的实际读取量计费。
 
 ## 命令
 
@@ -135,7 +130,6 @@ GET    /api/platform-accounts
 POST   /api/platform-accounts/:platform/qr
 GET    /api/platform-accounts/:platform/qr/:sessionId
 DELETE /api/platform-accounts/:platform/qr/:sessionId
-POST   /api/platform-accounts/twitter/oauth
 GET    /api/creators
 POST   /api/creators
 POST   /api/collection-runs
@@ -147,8 +141,6 @@ GET    /api/portfolio/admin/draft
 PUT    /api/portfolio/admin/draft
 POST   /api/portfolio/admin/publish
 ```
-
-Twitter/X OAuth 回调为 `GET /api/platform-oauth/twitter/callback`。该地址由随机、一次性、十分钟有效的 OAuth state 保护，不接受管理数据读写参数。
 
 未登录访问管理接口或持仓数据返回 `401`，仅持仓查看者返回 `403`。所有错误响应都包含 `error`、稳定 `code` 和 `requestId`。Hermes 仅保留写入 webhook，并继续使用独立 Bearer Token：
 

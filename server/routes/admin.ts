@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import {
+  isActivePlatform,
   deepSeekModels,
   type DeepSeekModel,
   type CollectionRunsResponse,
@@ -9,7 +10,6 @@ import {
   type PlatformAccountsResponse
 } from "../../shared/types.js";
 import { requireAdmin } from "../auth.js";
-import { encryptCredential } from "../credentials.js";
 import { cancelPlatformQrSession, createPlatformQrSession, pollPlatformQrSession } from "../platform-auth.js";
 import {
   checkPlatformAccount,
@@ -18,13 +18,10 @@ import {
   subscribeCreator,
   updateCreatorSubscription
 } from "../collector.js";
-import { deletePlatformAccount, listCreators, listPlatformAccounts, upsertPlatformAccount } from "../repositories/platform.js";
+import { deletePlatformAccount, listCreators, listPlatformAccounts } from "../repositories/platform.js";
 import { getCollectionRun, getCollectionSettings, listCollectionRuns, updateCollectionSettings } from "../repositories/collection.js";
 import { HttpError } from "../http-error.js";
-import { errorFields, log } from "../observability/logger.js";
 import { PlatformError } from "../platforms/types.js";
-import { twitterAdapter } from "../platforms/twitter.js";
-import { completeTwitterOAuthSession, createTwitterOAuthSession } from "../twitter-auth.js";
 import { platformValue, routeParam } from "../validation.js";
 
 export const adminRouter = Router();
@@ -78,45 +75,7 @@ adminRouter.use("/platform-accounts", (_req, res, next) => {
 });
 
 adminRouter.get("/platform-accounts", (_req, res: Response<PlatformAccountsResponse>) => {
-  res.json({ accounts: listPlatformAccounts() });
-});
-
-adminRouter.post("/platform-accounts/twitter/oauth", (_req, res, next) => {
-  try {
-    res.status(201).json(createTwitterOAuthSession());
-  } catch (error) {
-    next(platformHttpError(error, "无法开始 Twitter/X 授权。", "PLATFORM_OAUTH_FAILED"));
-  }
-});
-
-function oauthReturnPage(res: Response, status: "connected" | "error" | "credits") {
-  const target = `/admin/accounts?twitter=${status}`;
-  res.status(200).set({ "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" }).send(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>Twitter/X 授权</title></head>
-<body><p>${status === "connected" ? "Twitter/X 账号已绑定，正在返回管理后台…" : status === "credits" ? "Twitter/X API 额度不足，正在返回管理后台…" : "Twitter/X 授权失败，正在返回管理后台…"}</p>
-<script>window.location.replace(${JSON.stringify(target)})</script><noscript><a href="${target}">返回管理后台</a></noscript></body></html>`);
-}
-
-adminRouter.get("/platform-oauth/twitter/callback", async (req, res) => {
-  const state = typeof req.query.state === "string" ? req.query.state.slice(0, 200) : "";
-  const code = typeof req.query.code === "string" ? req.query.code.slice(0, 4_096) : "";
-  if (!state || !code || req.query.error) return oauthReturnPage(res, "error");
-  try {
-    const credential = await completeTwitterOAuthSession(state, code);
-    const identity = await twitterAdapter.checkAccount(credential);
-    upsertPlatformAccount({
-      platform: "twitter",
-      externalUserId: identity.externalUserId,
-      displayName: identity.displayName,
-      avatarUrl: identity.avatarUrl,
-      encryptedCredential: encryptCredential(credential)
-    });
-    return oauthReturnPage(res, "connected");
-  } catch (error) {
-    const platformCode = error instanceof PlatformError ? error.code : "unknown";
-    log("error", "twitter_oauth_callback_failed", { platformCode, ...errorFields(error) });
-    return oauthReturnPage(res, platformCode === "rate_limited" ? "credits" : "error");
-  }
+  res.json({ accounts: listPlatformAccounts().filter((account) => isActivePlatform(account.platform)) });
 });
 
 adminRouter.post("/platform-accounts/:platform/qr", async (req, res, next) => {
@@ -154,6 +113,7 @@ adminRouter.delete("/platform-accounts/:platform/qr/:sessionId", async (req, res
 adminRouter.post("/platform-accounts/:id/check", async (req, res, next) => {
   const account = listPlatformAccounts().find((item) => item.id === routeParam(req, "id"));
   if (!account) throw new HttpError(404, "平台账号不存在。", "PLATFORM_ACCOUNT_NOT_FOUND");
+  if (!isActivePlatform(account.platform)) throw new HttpError(410, "该平台接入已下线。", "PLATFORM_RETIRED");
   const request = requestAbort(req, res);
   try {
     res.json(await checkPlatformAccount(account.platform, request.signal));
@@ -172,7 +132,7 @@ adminRouter.delete("/platform-accounts/:id", (req, res) => {
 });
 
 adminRouter.get("/creators", (_req, res: Response<CreatorsResponse>) => {
-  res.json({ creators: listCreators() });
+  res.json({ creators: listCreators().filter((creator) => isActivePlatform(creator.platform)) });
 });
 
 adminRouter.get("/creators/search", async (req, res: Response<CreatorSearchResponse>, next) => {
@@ -205,6 +165,8 @@ adminRouter.post("/creators", async (req, res, next) => {
 
 adminRouter.patch("/creators/:id", (req, res) => {
   if (typeof req.body?.enabled !== "boolean") throw new HttpError(400, "enabled must be boolean.", "INVALID_CREATOR_STATE");
+  const existing = listCreators().find((creator) => creator.id === routeParam(req, "id"));
+  if (existing && !isActivePlatform(existing.platform)) throw new HttpError(410, "该平台接入已下线。", "PLATFORM_RETIRED");
   const creator = updateCreatorSubscription(routeParam(req, "id"), req.body.enabled);
   if (!creator) throw new HttpError(404, "博主不存在。", "CREATOR_NOT_FOUND");
   res.json(creator);

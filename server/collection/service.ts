@@ -1,4 +1,4 @@
-import type { CollectionRunTrigger, Platform } from "../../shared/types.js";
+import { isActivePlatform, type CollectionRunTrigger, type Platform } from "../../shared/types.js";
 import { decryptCredential } from "../credentials.js";
 import { createCollectionRun } from "../repositories/collection.js";
 import {
@@ -13,7 +13,12 @@ import { platformAdapter } from "../platforms/index.js";
 import { PlatformError } from "../platforms/types.js";
 import { collectionErrorDetails, platformCredential } from "./platform-service.js";
 
+function assertActivePlatform(platform: Platform) {
+  if (!isActivePlatform(platform)) throw new PlatformError("platform_error", "该平台接入已下线。");
+}
+
 export async function checkPlatformAccount(platform: Platform, signal?: AbortSignal) {
+  assertActivePlatform(platform);
   const stored = getPlatformAccountWithCredential(platform);
   if (!stored) throw new PlatformError("auth_required", "平台账号尚未绑定。");
   updatePlatformAccountStatus(stored.account.id, "checking");
@@ -29,11 +34,13 @@ export async function checkPlatformAccount(platform: Platform, signal?: AbortSig
 }
 
 export async function searchPlatformCreators(platform: Platform, query: string, signal?: AbortSignal) {
+  assertActivePlatform(platform);
   const { credential } = platformCredential(platform);
   return platformAdapter(platform).searchCreators(query, credential, signal);
 }
 
 export async function subscribeCreator(platform: Platform, externalId: string, signal?: AbortSignal) {
+  assertActivePlatform(platform);
   const { credential } = platformCredential(platform);
   const candidate = await platformAdapter(platform).resolveCreator(externalId, credential, signal);
   const creator = upsertCreator(candidate);
@@ -48,18 +55,21 @@ export function updateCreatorSubscription(id: string, enabled: boolean) {
 export function enqueueCollection(trigger: CollectionRunTrigger, creatorIds?: string[], scheduledFor?: string) {
   const creators = listCreators({ enabledOnly: true, ids: creatorIds?.length ? creatorIds : undefined });
   if (!creators.length) throw new Error("还没有启用的博主，请先添加博主。");
+  const retired = creators.find((creator) => !isActivePlatform(creator.platform));
+  if (creatorIds?.length && retired) throw new Error("该平台接入已下线，无法采集该博主。");
+  const activeCreators = creators.filter((creator) => isActivePlatform(creator.platform));
   const connected = new Set(listPlatformAccounts().filter((account) => account.status === "connected").map((account) => account.platform));
   if (process.env.BILIBILI_COOKIE?.trim()) connected.add("bilibili");
-  const eligible = creators.filter((creator) => connected.has(creator.platform));
-  if (creatorIds?.length && eligible.length !== creators.length) {
-    const unavailable = creators.find((creator) => !connected.has(creator.platform));
+  const eligible = activeCreators.filter((creator) => connected.has(creator.platform));
+  if (creatorIds?.length && eligible.length !== activeCreators.length) {
+    const unavailable = activeCreators.find((creator) => !connected.has(creator.platform));
     const label = unavailable?.platform === "bilibili"
       ? "B 站"
       : unavailable?.platform === "douyin"
         ? "抖音"
         : unavailable?.platform === "xiaohongshu"
           ? "小红书"
-          : "Twitter/X";
+          : "平台";
     throw new Error(`${label}账号未连接，无法采集该博主。`);
   }
   if (!eligible.length) throw new Error("没有可采集的已连接平台博主。");

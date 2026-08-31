@@ -275,8 +275,7 @@ test("every management operation rejects anonymous and viewer sessions before ha
   }
 
   const oauthCallback = await fetch(`${baseUrl}/api/platform-oauth/twitter/callback?error=access_denied`);
-  assert.equal(oauthCallback.status, 200);
-  assert.match(oauthCallback.headers.get("content-type") || "", /^text\/html/);
+  assert.equal(oauthCallback.status, 404);
 
   const viewerLogin = await fetch(`${baseUrl}/api/portfolio/session`, {
     method: "POST",

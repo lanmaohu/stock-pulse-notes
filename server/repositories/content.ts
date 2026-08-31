@@ -107,7 +107,8 @@ export function listContentCreatorOptions(): ContentCreatorOption[] {
   return database().prepare(`
     SELECT c.id, c.name, c.platform
     FROM creators c
-    WHERE EXISTS (SELECT 1 FROM content_items i WHERE i.creatorId = c.id)
+    WHERE c.platform <> 'twitter'
+      AND EXISTS (SELECT 1 FROM content_items i WHERE i.creatorId = c.id)
     ORDER BY lower(c.name) ASC, c.id ASC
   `).all() as unknown as ContentCreatorOption[];
 }
@@ -241,7 +242,7 @@ export function listContentInsights(options: {
   page?: number;
   pageSize?: ContentInsightsPageSize;
 } = {}): ContentInsightsResponse {
-  const clauses: string[] = [];
+  const clauses: string[] = ["c.platform <> 'twitter'"];
   const values: Array<string | number> = [];
   const filteredDate = options.publishedDate || options.collectedDate;
   if (filteredDate) {

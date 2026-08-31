@@ -1,4 +1,4 @@
-import type { CollectionRun, Platform } from "../../shared/types.js";
+import { isActivePlatform, type CollectionRun, type Platform } from "../../shared/types.js";
 import { analyzeContent } from "../ai.js";
 import {
   finishCollectionRunItem,
@@ -77,6 +77,15 @@ export function createCollectionProcessor(overrides: Partial<CollectionProcessor
         status: "error",
         errorCode: "creator_not_found",
         error: "博主订阅已停用或不存在。"
+      }, leaseOwner);
+      if (!saved) throw new LeaseLostError();
+      return;
+    }
+    if (!isActivePlatform(creator.platform)) {
+      const saved = dependencies.finishItem(runItem.id, {
+        status: "error",
+        errorCode: "platform_retired",
+        error: "该平台接入已下线。"
       }, leaseOwner);
       if (!saved) throw new LeaseLostError();
       return;

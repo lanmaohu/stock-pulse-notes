@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import type { Platform } from "../shared/types.js";
+import { activePlatforms, type ActivePlatform } from "../shared/types.js";
 import { HttpError } from "./http-error.js";
 
 export function routeParam(req: Request, name: string) {
@@ -24,7 +24,7 @@ export function positiveIntegerQuery(value: unknown, name: string, fallback: num
   return parsed;
 }
 
-export function platformValue(value: unknown): Platform {
-  if (value === "bilibili" || value === "douyin" || value === "xiaohongshu" || value === "twitter") return value;
+export function platformValue(value: unknown): ActivePlatform {
+  if (typeof value === "string" && activePlatforms.includes(value as ActivePlatform)) return value as ActivePlatform;
   throw new HttpError(400, "不支持的平台。", "UNSUPPORTED_PLATFORM");
 }

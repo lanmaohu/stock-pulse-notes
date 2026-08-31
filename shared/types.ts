@@ -9,6 +9,13 @@ export interface ChatMessage {
 }
 
 export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "twitter";
+export const activePlatforms = ["bilibili", "douyin", "xiaohongshu"] as const satisfies readonly Platform[];
+export type ActivePlatform = typeof activePlatforms[number];
+
+export function isActivePlatform(platform: Platform): platform is ActivePlatform {
+  return activePlatforms.includes(platform as ActivePlatform);
+}
+
 export type PlatformAccountStatus = "connected" | "needs_reauth" | "checking" | "error";
 export const deepSeekModels = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
 export type DeepSeekModel = typeof deepSeekModels[number];

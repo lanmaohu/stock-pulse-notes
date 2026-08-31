@@ -1,5 +1,5 @@
 import {
-  Activity, AlertTriangle, AtSign, CheckCircle2, Clock3, ExternalLink, History,
+  Activity, AlertTriangle, CheckCircle2, Clock3, ExternalLink, History,
   KeyRound, Link2, LoaderCircle, LogIn, LogOut, Play, Plus, RefreshCw, Search, Settings,
   ShieldCheck, Trash2, UserRoundCheck, Users, Video, X
 } from "lucide-react";
@@ -8,8 +8,9 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useSearchParam
 import type {
   CollectionRun, CollectionRunsResponse, CollectionSettings,
   CollectionSettingsResponse, Creator, CreatorCandidate, CreatorSearchResponse, CreatorsResponse,
-  DeepSeekModel, Platform, PlatformAccount, PlatformAccountsResponse, PlatformOAuthStartResponse, PlatformQrSession
+  ActivePlatform, DeepSeekModel, Platform, PlatformAccount, PlatformAccountsResponse, PlatformQrSession
 } from "../shared/types";
+import { activePlatforms, isActivePlatform } from "../shared/types";
 import { useAdminAuth } from "./AdminAuth";
 import { api } from "./api";
 import { siteConfig } from "./siteConfig";
@@ -30,7 +31,7 @@ function Loading({ children }: { children: string }) {
   return <div className="route-loading"><LoaderCircle className="spin" size={24} />{children}</div>;
 }
 
-const platforms: Platform[] = ["bilibili", "douyin", "xiaohongshu", "twitter"];
+const platforms: ActivePlatform[] = [...activePlatforms];
 const analysisModelOptions: Array<{ value: DeepSeekModel; label: string }> = [
   { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
   { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro" }
@@ -44,7 +45,6 @@ const platformInput: Record<Platform, { hint: string; placeholder: string; idLab
 
 function PlatformIcon({ platform }: { platform: Platform }) {
   if (platform === "douyin") return <Activity size={21} />;
-  if (platform === "twitter") return <AtSign size={21} />;
   return <Video size={21} />;
 }
 
@@ -54,7 +54,7 @@ function CreatorsView({ creators, connectedPlatforms, onChanged, onRun }: {
   onChanged: () => Promise<void>;
   onRun: (creatorId: string) => Promise<void>;
 }) {
-  const [platform, setPlatform] = useState<Platform>(() => platforms.find((item) => connectedPlatforms.has(item)) || "bilibili");
+  const [platform, setPlatform] = useState<ActivePlatform>(() => platforms.find((item) => connectedPlatforms.has(item)) || "bilibili");
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<CreatorCandidate[]>([]);
   const [searching, setSearching] = useState(false);
@@ -77,7 +77,7 @@ function CreatorsView({ creators, connectedPlatforms, onChanged, onRun }: {
     }
   }
 
-  function changePlatform(next: Platform) {
+  function changePlatform(next: ActivePlatform) {
     setPlatform(next);
     setQuery("");
     setCandidates([]);
@@ -109,7 +109,7 @@ function CreatorsView({ creators, connectedPlatforms, onChanged, onRun }: {
       <div className="section-heading"><div><h2>添加博主</h2><p>{platformInput[platform].hint}</p></div><span className={`platform-badge ${platform}`}>{platformLabel[platform]}</span></div>
       <div className="platform-selector" role="group" aria-label="选择内容平台">{platforms.map((item) => <button type="button" key={item} className={item === platform ? "selected" : ""} onClick={() => changePlatform(item)}><span className={`platform-icon mini ${item}`}><PlatformIcon platform={item} /></span>{platformLabel[item]}{connectedPlatforms.has(item) ? <StatusDot status="good" /> : null}</button>)}</div>
       <form className="creator-search" onSubmit={search}><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={platformInput[platform].placeholder} disabled={!connectedPlatforms.has(platform)} /></div><button className="primary-button compact" type="submit" disabled={!connectedPlatforms.has(platform) || searching || !query.trim()}>{searching ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />}查找</button></form>
-      {!connectedPlatforms.has(platform) ? <div className="inline-notice"><KeyRound size={17} />请先在“平台账号”中{platform === "twitter" ? "授权绑定" : "扫码绑定"}{platformLabel[platform]}账号。</div> : null}
+      {!connectedPlatforms.has(platform) ? <div className="inline-notice"><KeyRound size={17} />请先在“平台账号”中扫码绑定{platformLabel[platform]}账号。</div> : null}
       {error ? <div className="inline-error"><AlertTriangle size={17} />{error}</div> : null}
       {candidates.length ? <div className="candidate-list">{candidates.map((candidate) => {
         const exists = creators.some((creator) => creator.platform === candidate.platform && creator.externalId === candidate.externalId);
@@ -130,17 +130,9 @@ function QrDialog({ session, onClose }: { session: PlatformQrSession; onClose: (
 }
 
 function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; onChanged: () => Promise<void> }) {
-  const [searchParams] = useSearchParams();
   const [qr, setQr] = useState<PlatformQrSession | null>(null);
   const [busyPlatform, setBusyPlatform] = useState<Platform | null>(null);
   const [errors, setErrors] = useState<Partial<Record<Platform, string>>>({});
-  useEffect(() => {
-    if (searchParams.get("twitter") === "credits") {
-      setErrors((current) => ({ ...current, twitter: "Twitter/X API 额度不足，请在 X Developer Console 充值后重新授权。" }));
-    } else if (searchParams.get("twitter") === "error") {
-      setErrors((current) => ({ ...current, twitter: "Twitter/X 授权失败或已取消，请重新授权。" }));
-    }
-  }, [searchParams]);
   useEffect(() => {
     if (!qr || (qr.status !== "waiting" && qr.status !== "scanned")) return;
     const timer = window.setTimeout(async () => {
@@ -154,7 +146,7 @@ function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; on
     }, 1800);
     return () => window.clearTimeout(timer);
   }, [onChanged, qr]);
-  async function connect(platform: Platform) { setBusyPlatform(platform); setErrors((current) => ({ ...current, [platform]: undefined })); try { if (platform === "twitter") { const result = await api<PlatformOAuthStartResponse>("/api/platform-accounts/twitter/oauth", { method: "POST" }); window.location.assign(result.authorizeUrl); return; } setQr(await api<PlatformQrSession>(`/api/platform-accounts/${platform}/qr`, { method: "POST" })); } catch (caught) { setErrors((current) => ({ ...current, [platform]: caught instanceof Error ? caught.message : platform === "twitter" ? "无法开始授权。" : "无法生成二维码。" })); } finally { setBusyPlatform(null); } }
+  async function connect(platform: ActivePlatform) { setBusyPlatform(platform); setErrors((current) => ({ ...current, [platform]: undefined })); try { setQr(await api<PlatformQrSession>(`/api/platform-accounts/${platform}/qr`, { method: "POST" })); } catch (caught) { setErrors((current) => ({ ...current, [platform]: caught instanceof Error ? caught.message : "无法生成二维码。" })); } finally { setBusyPlatform(null); } }
   async function check(account: PlatformAccount) { setBusyPlatform(account.platform); setErrors((current) => ({ ...current, [account.platform]: undefined })); try { await api(`/api/platform-accounts/${account.id}/check`, { method: "POST" }); await onChanged(); } catch (caught) { setErrors((current) => ({ ...current, [account.platform]: caught instanceof Error ? caught.message : "账号检查失败。" })); await onChanged(); } finally { setBusyPlatform(null); } }
   async function disconnect(account: PlatformAccount) { if (!window.confirm(`解绑${platformLabel[account.platform]}账号？已采集内容和博主订阅不会删除。`)) return; await api(`/api/platform-accounts/${account.id}`, { method: "DELETE" }); await onChanged(); }
   async function closeQr() { const current = qr; setQr(null); if (current && (current.status === "waiting" || current.status === "scanned")) await api(`/api/platform-accounts/${current.platform}/qr/${current.sessionId}`, { method: "DELETE" }).catch(() => undefined); }
@@ -162,7 +154,7 @@ function AccountsView({ accounts, onChanged }: { accounts: PlatformAccount[]; on
     const account = accounts.find((item) => item.platform === platform);
     const busy = busyPlatform === platform;
     const status = account?.status === "connected" ? "已连接" : account?.status === "checking" ? "检查中" : account?.status === "needs_reauth" ? "需要重新登录" : account?.status === "error" ? "连接异常" : "未连接";
-    return <Fragment key={platform}><div className="account-row available"><div className={`platform-icon ${platform}`}><PlatformIcon platform={platform} /></div>{account ? <Avatar src={account.avatarUrl} name={account.displayName} /> : <span className="account-avatar-spacer" />}<div className="account-name"><strong>{platformLabel[platform]}</strong><span>{account ? `${account.displayName} · ${platformInput[platform].idLabel} ${account.externalUserId}` : "未绑定"}</span></div><div className="account-status"><StatusDot status={account?.status === "connected" ? "good" : account ? "bad" : "idle"} /><span>{status}</span>{account?.lastCheckedAt ? <small>{formatDate(account.lastCheckedAt)}</small> : null}</div>{account ? <div className="row-actions"><button className="secondary-button" onClick={() => void check(account)} disabled={busy}><RefreshCw size={16} />检查</button><button className="secondary-button" onClick={() => void connect(platform)} disabled={busy}><Link2 size={16} />{platform === "twitter" ? "重新授权" : "重新绑定"}</button><button className="icon-button danger" onClick={() => void disconnect(account)} title="解绑账号" aria-label={`解绑${platformLabel[platform]}账号`}><Trash2 size={16} /></button></div> : <button className="primary-button compact" onClick={() => void connect(platform)} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />}{platform === "twitter" ? "授权绑定" : "扫码绑定"}</button>}</div>{errors[platform] ? <div className="inline-error"><AlertTriangle size={17} />{errors[platform]}</div> : null}</Fragment>;
+    return <Fragment key={platform}><div className="account-row available"><div className={`platform-icon ${platform}`}><PlatformIcon platform={platform} /></div>{account ? <Avatar src={account.avatarUrl} name={account.displayName} /> : <span className="account-avatar-spacer" />}<div className="account-name"><strong>{platformLabel[platform]}</strong><span>{account ? `${account.displayName} · ${platformInput[platform].idLabel} ${account.externalUserId}` : "未绑定"}</span></div><div className="account-status"><StatusDot status={account?.status === "connected" ? "good" : account ? "bad" : "idle"} /><span>{status}</span>{account?.lastCheckedAt ? <small>{formatDate(account.lastCheckedAt)}</small> : null}</div>{account ? <div className="row-actions"><button className="secondary-button" onClick={() => void check(account)} disabled={busy}><RefreshCw size={16} />检查</button><button className="secondary-button" onClick={() => void connect(platform)} disabled={busy}><Link2 size={16} />重新绑定</button><button className="icon-button danger" onClick={() => void disconnect(account)} title="解绑账号" aria-label={`解绑${platformLabel[platform]}账号`}><Trash2 size={16} /></button></div> : <button className="primary-button compact" onClick={() => void connect(platform)} disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />}扫码绑定</button>}</div>{errors[platform] ? <div className="inline-error"><AlertTriangle size={17} />{errors[platform]}</div> : null}</Fragment>;
   })}{qr ? <QrDialog session={qr} onClose={() => void closeQr()} /> : null}</section>;
 }
 
@@ -234,8 +226,9 @@ function AdminWorkspace() {
   if (checking) return <Loading>正在检查管理员会话</Loading>;
   if (!authenticated) return <Navigate to={`/admin/login?next=${encodeURIComponent(location.pathname)}`} replace />;
   if (!tab) return <Navigate to="/admin/creators" replace />;
-  const connectedPlatforms = new Set(accounts.filter((account) => account.status === "connected").map((account) => account.platform));
-  const enabledCreators = creators.filter((creator) => creator.enabled);
+  const visibleCreators = creators.filter((creator) => isActivePlatform(creator.platform));
+  const connectedPlatforms = new Set(accounts.filter((account) => account.status === "connected" && isActivePlatform(account.platform)).map((account) => account.platform));
+  const enabledCreators = visibleCreators.filter((creator) => creator.enabled);
   const collectibleCreators = enabledCreators.filter((creator) => connectedPlatforms.has(creator.platform));
   async function runNow(creatorId?: string) { setBusyRun(true); setError(""); try { await api<CollectionRun>("/api/collection-runs", { method: "POST", body: JSON.stringify(creatorId ? { creatorIds: [creatorId] } : {}) }); navigate("/admin/runs"); } catch (caught) { setError(caught instanceof Error ? caught.message : "无法开始采集。"); } finally { setBusyRun(false); } }
   async function signOut() {
@@ -246,7 +239,7 @@ function AdminWorkspace() {
       setError(caught instanceof Error ? caught.message : "退出失败。");
     }
   }
-  return <main className="app-shell admin-shell"><WorkspaceSidebar hasActiveRun={hasActiveRun} onLogout={() => void signOut()} /><section className="main-column"><header className="page-header"><div><span className="eyebrow">Stockpulse Admin</span><h1>{current?.label}</h1></div><div className="header-actions">{tab === "creators" ? <button className="primary-button compact" onClick={() => void runNow()} disabled={busyRun || !collectibleCreators.length}>{busyRun ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}立即采集</button> : null}<button className="secondary-button admin-logout-button" onClick={() => void signOut()} aria-label="退出管理"><LogOut size={16} /><span>退出管理</span></button></div></header><WorkspaceMobileNavigation hasActiveRun={hasActiveRun} />{error ? <div className="global-error"><AlertTriangle size={18} /><span>{error}</span><button className="icon-clear" onClick={() => setError("")} aria-label="关闭"><X size={16} /></button></div> : null}{tab === "portfolio" ? <Suspense fallback={<Loading>正在加载持仓</Loading>}><PortfolioView adminMode /></Suspense> : <div className="page-content">{loading ? <div className="loading-line"><LoaderCircle className="spin" size={18} />正在加载管理数据</div> : null}{!loading && tab === "creators" ? <CreatorsView creators={creators} connectedPlatforms={connectedPlatforms} onChanged={async () => { await Promise.all([loadCreators(), loadAccounts()]); }} onRun={runNow} /> : null}{!loading && tab === "accounts" ? <AccountsView accounts={accounts} onChanged={loadAccounts} /> : null}{!loading && tab === "runs" ? <RunsView runs={runs} onRefresh={loadRuns} /> : null}{!loading && tab === "settings" && settings ? <SettingsView settings={settings} onSaved={setSettings} /> : null}</div>}<FilingFooter /></section></main>;
+  return <main className="app-shell admin-shell"><WorkspaceSidebar hasActiveRun={hasActiveRun} onLogout={() => void signOut()} /><section className="main-column"><header className="page-header"><div><span className="eyebrow">Stockpulse Admin</span><h1>{current?.label}</h1></div><div className="header-actions">{tab === "creators" ? <button className="primary-button compact" onClick={() => void runNow()} disabled={busyRun || !collectibleCreators.length}>{busyRun ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}立即采集</button> : null}<button className="secondary-button admin-logout-button" onClick={() => void signOut()} aria-label="退出管理"><LogOut size={16} /><span>退出管理</span></button></div></header><WorkspaceMobileNavigation hasActiveRun={hasActiveRun} />{error ? <div className="global-error"><AlertTriangle size={18} /><span>{error}</span><button className="icon-clear" onClick={() => setError("")} aria-label="关闭"><X size={16} /></button></div> : null}{tab === "portfolio" ? <Suspense fallback={<Loading>正在加载持仓</Loading>}><PortfolioView adminMode /></Suspense> : <div className="page-content">{loading ? <div className="loading-line"><LoaderCircle className="spin" size={18} />正在加载管理数据</div> : null}{!loading && tab === "creators" ? <CreatorsView creators={visibleCreators} connectedPlatforms={connectedPlatforms} onChanged={async () => { await Promise.all([loadCreators(), loadAccounts()]); }} onRun={runNow} /> : null}{!loading && tab === "accounts" ? <AccountsView accounts={accounts.filter((account) => isActivePlatform(account.platform))} onChanged={loadAccounts} /> : null}{!loading && tab === "runs" ? <RunsView runs={runs} onRefresh={loadRuns} /> : null}{!loading && tab === "settings" && settings ? <SettingsView settings={settings} onSaved={setSettings} /> : null}</div>}<FilingFooter /></section></main>;
 }
 
 export default function AdminApp() {

@@ -1,12 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import type { ContentInsight } from "../shared/types";
 import { App } from "./App";
 
 function json(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 }
 
-function insightFixture(id: string, title: string, contentType: "video" | "note" = "video") {
+function insightFixture(id: string, title: string, contentType: "video" | "note" = "video"): ContentInsight {
   return {
     content: {
       id,

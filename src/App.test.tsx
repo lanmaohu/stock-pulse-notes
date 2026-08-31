@@ -143,6 +143,62 @@ describe("application routes", () => {
     expect(await screen.findByRole("button", { name: "收起观点：测试视频" })).toHaveAttribute("aria-expanded", "true");
   });
 
+  test("an administrator can manually retry a failed analysis from its expanded card", async () => {
+    const failed = insightFixture("failed-video", "分析失败视频");
+    failed.content.analysisStatus = "error";
+    failed.content.error = "DeepSeek returned an empty response.";
+    failed.content.summarySections = [];
+    failed.views = [];
+    const retried = insightFixture("failed-video", "分析失败视频");
+    let current = failed;
+    let resolveRetry: ((response: Response) => void) | undefined;
+    const retryResponse = new Promise<Response>((resolve) => { resolveRetry = resolve; });
+    const requests: Array<{ path: string; method: string }> = [];
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method || "GET";
+      requests.push({ path, method });
+      if (path === "/api/auth/session") return json({ authenticated: true });
+      if (path.startsWith("/api/content-creators")) return json({ creators: [] });
+      if (path.startsWith("/api/content-insights")) return json({
+        insights: [current],
+        pagination: { page: 1, pageSize: 10, totalItems: 1, totalPages: 1 },
+        summary: { contentCount: 1, viewCount: current.views.length, targetCount: current.views.length }
+      });
+      if (path === "/api/content-items/failed-video/analysis-retry" && method === "POST") return retryResponse;
+      throw new Error(`Unexpected request ${method} ${path}`);
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "展开观点：分析失败视频" }));
+    expect(await screen.findByText("DeepSeek returned an empty response.")).toBeInTheDocument();
+    const retryButton = await screen.findByRole("button", { name: "重新分析" });
+    fireEvent.click(retryButton);
+    expect(await screen.findByRole("button", { name: "重新分析中" })).toBeDisabled();
+    expect(screen.getByText("正在重新分析，请稍候。")).toBeInTheDocument();
+
+    current = retried;
+    resolveRetry!(new Response(JSON.stringify(retried), { status: 200, headers: { "Content-Type": "application/json" } }));
+    expect(await screen.findByText("分析失败视频的核心观点")).toBeInTheDocument();
+    expect(requests).toContainEqual({ path: "/api/content-items/failed-video/analysis-retry", method: "POST" });
+    expect(screen.queryByRole("button", { name: "重新分析" })).not.toBeInTheDocument();
+  });
+
+  test("manual analysis retry is not exposed to anonymous readers", async () => {
+    const failed = insightFixture("public-failed-video", "公开失败视频");
+    failed.content.analysisStatus = "error";
+    failed.content.error = "公开内容分析暂时失败";
+    failed.content.summarySections = [];
+    failed.views = [];
+    mockPublicInsights([failed]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "展开观点：公开失败视频" }));
+    expect(await screen.findByText("公开内容分析暂时失败")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新分析" })).not.toBeInTheDocument();
+  });
+
   test("video and note cards expand independently", async () => {
     mockPublicInsights([
       insightFixture("video-1", "测试视频"),

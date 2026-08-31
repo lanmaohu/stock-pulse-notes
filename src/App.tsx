@@ -166,10 +166,29 @@ function ContentSummaryPanel({ content }: { content: ContentInsight["content"] }
   );
 }
 
-function InsightCard({ insight }: { insight: ContentInsight }) {
+function InsightCard({ insight, canRetry, onRetry }: {
+  insight: ContentInsight;
+  canRetry: boolean;
+  onRetry: (contentId: string) => Promise<void>;
+}) {
   const { content, views } = insight;
   const [expanded, setExpanded] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState("");
   const detailsId = `insight-details-${content.id}`;
+  const displayedAnalysisStatus = retrying ? "running" : content.analysisStatus;
+
+  async function retryAnalysis() {
+    setRetryError("");
+    setRetrying(true);
+    try {
+      await onRetry(content.id);
+    } catch (caught) {
+      setRetryError(caught instanceof Error ? caught.message : "重新分析失败。请稍后再试。");
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   return (
     <article className={`insight-card${expanded ? " expanded" : ""}`}>
@@ -194,12 +213,12 @@ function InsightCard({ insight }: { insight: ContentInsight }) {
               {content.title}<ExternalLink size={15} />
             </a>
             <div className="content-state">
-              <span className={`analysis-state ${content.analysisStatus}`}>
-                {content.analysisStatus === "success"
+              <span className={`analysis-state ${displayedAnalysisStatus}`}>
+                {displayedAnalysisStatus === "success"
                   ? "分析完成"
-                  : content.analysisStatus === "running"
+                  : displayedAnalysisStatus === "running"
                     ? "分析中"
-                    : content.analysisStatus === "error"
+                    : displayedAnalysisStatus === "error"
                       ? "分析失败"
                       : "等待分析"}
               </span>
@@ -255,9 +274,17 @@ function InsightCard({ insight }: { insight: ContentInsight }) {
               })}
             </div>
           ) : (
-            <div className={`analysis-message ${content.analysisStatus}`}>
-              {content.analysisStatus === "error" ? <AlertTriangle size={17} /> : <LoaderCircle className={content.analysisStatus === "running" ? "spin" : ""} size={17} />}
-              <span>{content.error || (content.analysisStatus === "success" ? "内容中没有识别到投资观点。" : "投资观点正在生成。")}</span>
+            <div className={`analysis-message ${displayedAnalysisStatus}`} aria-live="polite">
+              <div className="analysis-message-copy">
+                {displayedAnalysisStatus === "error" ? <AlertTriangle size={17} /> : <LoaderCircle className={displayedAnalysisStatus === "running" ? "spin" : ""} size={17} />}
+                <span>{retrying ? "正在重新分析，请稍候。" : retryError || content.error || (content.analysisStatus === "success" ? "内容中没有识别到投资观点。" : "投资观点正在生成。")}</span>
+              </div>
+              {canRetry && content.analysisStatus === "error" ? (
+                <button type="button" className="analysis-retry-button" onClick={() => void retryAnalysis()} disabled={retrying}>
+                  <RefreshCw className={retrying ? "spin" : ""} size={15} />
+                  {retrying ? "重新分析中" : "重新分析"}
+                </button>
+              ) : null}
             </div>
           )}
         </div>
@@ -280,7 +307,9 @@ function InsightsView({
   onCreator,
   onPage,
   onPageSize,
-  onRefresh
+  onRefresh,
+  canRetry,
+  onRetry
 }: {
   insights: ContentInsight[];
   pagination: ContentInsightsPagination;
@@ -296,6 +325,8 @@ function InsightsView({
   onPage: (value: number) => void;
   onPageSize: (value: ContentInsightsPageSize) => void;
   onRefresh: () => void;
+  canRetry: boolean;
+  onRetry: (contentId: string) => Promise<void>;
 }) {
   const listTopRef = useRef<HTMLElement>(null);
 
@@ -334,7 +365,7 @@ function InsightsView({
         <div className="loading-line"><LoaderCircle className="spin" size={18} />正在加载观点</div>
       ) : insights.length ? (
         <>
-          <section className="insight-list">{insights.map((insight) => <InsightCard key={insight.content.id} insight={insight} />)}</section>
+          <section className="insight-list">{insights.map((insight) => <InsightCard key={insight.content.id} insight={insight} canRetry={canRetry} onRetry={onRetry} />)}</section>
           <nav className="insight-pagination" aria-label="观点分页">
             <span className="pagination-summary">共 {pagination.totalItems} 条</span>
             <div className="pagination-pages">
@@ -383,6 +414,7 @@ function PublicShell({ title, portfolio = false, children }: { title: string; po
 }
 
 function InsightsPage() {
+  const { authenticated } = useAdminAuth();
   const [creators, setCreators] = useState<ContentCreatorOption[]>([]);
   const [insights, setInsights] = useState<ContentInsight[]>([]);
   const [date, setDate] = useState("");
@@ -404,12 +436,12 @@ function InsightsPage() {
       .catch((caught) => setError(caught instanceof Error ? caught.message : "博主筛选加载失败。"));
   }, []);
 
-  const loadInsights = useCallback(async () => {
+  const loadInsights = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     requestController.current?.abort();
     const controller = new AbortController();
     requestController.current = controller;
     const sequence = ++requestSequence.current;
-    setLoading(true);
+    if (!background) setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
       if (date) params.set("publishedDate", date);
@@ -427,9 +459,15 @@ function InsightsPage() {
         setError(caught instanceof Error ? caught.message : "观点加载失败。");
       }
     } finally {
-      if (sequence === requestSequence.current) setLoading(false);
+      if (sequence === requestSequence.current && !background) setLoading(false);
     }
   }, [creatorId, date, page, pageSize, query]);
+
+  const retryAnalysis = useCallback(async (contentId: string) => {
+    const retried = await api<ContentInsight>(`/api/content-items/${encodeURIComponent(contentId)}/analysis-retry`, { method: "POST" });
+    setInsights((current) => current.map((insight) => insight.content.id === contentId ? retried : insight));
+    await loadInsights({ background: true });
+  }, [loadInsights]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadInsights(), query ? 300 : 0);
@@ -443,7 +481,8 @@ function InsightsPage() {
     {error ? <div className="global-error"><AlertTriangle size={18} /><span>{error}</span><button className="icon-clear" onClick={() => setError("")} aria-label="关闭"><X size={16} /></button></div> : null}
     <InsightsView insights={insights} pagination={pagination} summary={summary} creators={creators} date={date} query={query} creatorId={creatorId} loading={loading}
       onDate={(value) => { setDate(value); setPage(1); }} onQuery={(value) => { setQuery(value); setPage(1); }} onCreator={(value) => { setCreatorId(value); setPage(1); }}
-      onPage={setPage} onPageSize={(value) => { rememberInsightPageSize(value); setPageSize(value); setPage(1); }} onRefresh={() => void loadInsights()} />
+      onPage={setPage} onPageSize={(value) => { rememberInsightPageSize(value); setPageSize(value); setPage(1); }} onRefresh={() => void loadInsights()}
+      canRetry={authenticated} onRetry={retryAnalysis} />
   </div></PublicShell>;
 }
 

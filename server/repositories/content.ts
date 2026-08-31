@@ -3,6 +3,7 @@ import type {
   ContentCreatorOption,
   ContentInsightsPageSize,
   ContentInsightsResponse,
+  ContentInsight,
   ContentItem,
   ContentSummarySection,
   ContentStockView,
@@ -189,9 +190,27 @@ export function getContentItem(id: string): ContentItem | null {
   return row ? toContent(row) : null;
 }
 
+export function getContentInsight(id: string): ContentInsight | null {
+  const connection = database();
+  const contentRow = connection.prepare("SELECT * FROM content_items WHERE id = ?").get(id) as ContentItemRow | undefined;
+  if (!contentRow) return null;
+  const viewRows = connection.prepare(`
+    SELECT * FROM content_stock_views WHERE contentId = ? ORDER BY createdAt ASC
+  `).all(id) as ContentStockViewRow[];
+  return { content: toContent(contentRow), views: viewRows.map(toView) };
+}
+
 export function markContentAnalysisStatus(id: string, status: ContentItem["analysisStatus"], error?: string) {
   database().prepare("UPDATE content_items SET analysisStatus = ?, error = ?, updatedAt = ? WHERE id = ?")
     .run(status, error || null, new Date().toISOString(), id);
+}
+
+export function beginContentAnalysisRetry(id: string) {
+  const result = database().prepare(`
+    UPDATE content_items SET analysisStatus = 'running', error = NULL, updatedAt = ?
+    WHERE id = ? AND analysisStatus = 'error'
+  `).run(new Date().toISOString(), id);
+  return Number(result.changes) === 1;
 }
 
 export function resetContentAnalysis(id: string) {

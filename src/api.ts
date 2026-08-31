@@ -6,6 +6,7 @@ const protectedPrefixes = [
   "/api/creators",
   "/api/collection-runs",
   "/api/collection-settings",
+  "/api/content-items",
   "/api/portfolio"
 ];
 

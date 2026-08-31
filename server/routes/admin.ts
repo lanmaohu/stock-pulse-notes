@@ -5,6 +5,7 @@ import {
   type DeepSeekModel,
   type CollectionRunsResponse,
   type CollectionSettingsResponse,
+  type ContentInsight,
   type CreatorSearchResponse,
   type CreatorsResponse,
   type PlatformAccountsResponse
@@ -18,14 +19,22 @@ import {
   subscribeCreator,
   updateCreatorSubscription
 } from "../collector.js";
+import { analyzeContent } from "../ai.js";
 import { deletePlatformAccount, listCreators, listPlatformAccounts } from "../repositories/platform.js";
 import { getCollectionRun, getCollectionSettings, listCollectionRuns, updateCollectionSettings } from "../repositories/collection.js";
+import {
+  beginContentAnalysisRetry,
+  getContentInsight,
+  getContentItem,
+  markContentAnalysisStatus,
+  saveContentAnalysis
+} from "../repositories/content.js";
 import { HttpError } from "../http-error.js";
 import { PlatformError } from "../platforms/types.js";
 import { platformValue, routeParam } from "../validation.js";
 
 export const adminRouter = Router();
-const protectedPrefixes = ["/platform-accounts", "/creators", "/collection-runs", "/collection-settings"];
+const protectedPrefixes = ["/platform-accounts", "/creators", "/collection-runs", "/collection-settings", "/content-items"];
 
 function platformHttpError(error: unknown, fallbackMessage: string, fallbackCode: string) {
   if (!(error instanceof PlatformError)) {
@@ -170,6 +179,36 @@ adminRouter.patch("/creators/:id", (req, res) => {
   const creator = updateCreatorSubscription(routeParam(req, "id"), req.body.enabled);
   if (!creator) throw new HttpError(404, "博主不存在。", "CREATOR_NOT_FOUND");
   res.json(creator);
+});
+
+adminRouter.post("/content-items/:id/analysis-retry", async (req, res: Response<ContentInsight>, next) => {
+  try {
+    const contentId = routeParam(req, "id");
+    const content = getContentItem(contentId);
+    if (!content) throw new HttpError(404, "内容不存在。", "CONTENT_NOT_FOUND");
+    if (!beginContentAnalysisRetry(contentId)) {
+      throw new HttpError(409, content.analysisStatus === "running" ? "内容正在分析中。" : "只有分析失败的内容可以重试。", "CONTENT_ANALYSIS_NOT_RETRYABLE");
+    }
+
+    const request = requestAbort(req, res);
+    let insight: ContentInsight;
+    try {
+      const analysis = await analyzeContent(content, { signal: request.signal, model: getCollectionSettings().analysisModel });
+      saveContentAnalysis(content, analysis);
+      const saved = getContentInsight(contentId);
+      if (!saved) throw new Error("Content disappeared after analysis.");
+      insight = saved;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "投资观点分析失败。";
+      markContentAnalysisStatus(contentId, "error", message.slice(0, 1_000));
+      throw new HttpError(502, message, "CONTENT_ANALYSIS_FAILED");
+    } finally {
+      request.dispose();
+    }
+    res.json(insight);
+  } catch (error) {
+    next(error);
+  }
 });
 
 adminRouter.post("/collection-runs", (req, res) => {

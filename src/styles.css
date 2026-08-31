@@ -335,8 +335,13 @@ a { color: inherit; }
 .evidence-grid ul { margin: 0; padding-left: 18px; }
 .evidence-grid li, .evidence-grid p { margin: 5px 0; color: #4a575d; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .view-section blockquote { margin: 16px 0 0; border-left: 3px solid #c4d4cd; padding: 9px 12px; color: #667279; background: #f7f9f7; font-size: 13px; line-height: 1.55; }
-.analysis-message { margin: 16px 18px 18px; border: 1px solid #dfe5e1; border-radius: 6px; padding: 12px; color: #68747a; background: #f8faf8; font-size: 13px; }
+.analysis-message { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 16px 18px 18px; border: 1px solid #dfe5e1; border-radius: 6px; padding: 12px; color: #68747a; background: #f8faf8; font-size: 13px; }
 .analysis-message.error { border-color: #e2beb9; color: #963a35; background: #fff7f6; }
+.analysis-message-copy { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.analysis-message-copy svg { flex: 0 0 auto; }
+.analysis-message-copy span { overflow-wrap: anywhere; }
+.analysis-retry-button { display: inline-flex; min-height: 32px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; border: 1px solid #d9aaa5; border-radius: 6px; padding: 5px 11px; color: #8f342f; background: #fff; font-size: 12px; font-weight: 750; white-space: nowrap; }
+.analysis-retry-button:hover:not(:disabled) { border-color: #bd7771; background: #fff1ef; }
 
 .empty-state { display: grid; min-height: 270px; place-items: center; align-content: center; padding: 30px; text-align: center; }
 .empty-state > span { display: grid; width: 52px; height: 52px; margin-bottom: 13px; place-items: center; border-radius: 7px; color: #4b746f; background: #eaf1ed; }

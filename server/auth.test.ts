@@ -18,13 +18,14 @@ process.env.PORTFOLIO_ADMIN_PASSWORD = "admin-test-password";
 
 const { app } = await import("./index.js");
 const { ensureDatabase } = await import("./database/migrations.js");
-const { saveContentAnalysis, upsertContent } = await import("./repositories/content.js");
+const { markContentAnalysisStatus, saveContentAnalysis, upsertContent } = await import("./repositories/content.js");
 const { upsertCreator } = await import("./repositories/platform.js");
 const { writeServiceHeartbeat } = await import("./repositories/operations.js");
 const { createVerifiedBackup } = await import("./operations/backup.js");
 const server = app.listen(0);
 let baseUrl = "";
 let seededCreatorId = "";
+let retryableContentId = "";
 
 before(async () => {
   await ensureDatabase();
@@ -62,6 +63,24 @@ before(async () => {
     sourceSnippet: "",
     model: "test-model"
   }] });
+  const retryableContent = upsertContent({
+    platform: "bilibili",
+    externalId: "api-retryable-content",
+    creatorId: creator.id,
+    creatorExternalId: creator.externalId,
+    creatorName: creator.name,
+    contentType: "video",
+    title: "可手动重试内容",
+    description: "",
+    tags: [],
+    sourceUrl: "https://example.com/api-retryable-content",
+    publishedAt: "2026-08-14T18:00:00.000Z",
+    transcript: "",
+    transcriptSource: "metadata",
+    status: "metadata_only"
+  }).content;
+  retryableContentId = retryableContent.id;
+  markContentAnalysisStatus(retryableContentId, "error", "DeepSeek returned an empty response.");
   const now = new Date().toISOString();
   writeServiceHeartbeat({ serviceName: "worker", instanceId: "http-test-worker", status: "ready", startedAt: now, heartbeatAt: now });
   await createVerifiedBackup({ reason: "http-test" });
@@ -98,10 +117,10 @@ test("public APIs stay available while management reads require an administrator
     pagination: { page: number; pageSize: number };
     summary: { contentCount: number };
   };
-  assert.equal(insightsBody.insights.length, 1);
+  assert.equal(insightsBody.insights.length, 2);
   assert.deepEqual(insightsBody.insights[0]?.content.summarySections, []);
-  assert.deepEqual(insightsBody.pagination, { page: 1, pageSize: 10, totalItems: 1, totalPages: 1 });
-  assert.equal(insightsBody.summary.contentCount, 1);
+  assert.deepEqual(insightsBody.pagination, { page: 1, pageSize: 10, totalItems: 2, totalPages: 1 });
+  assert.equal(insightsBody.summary.contentCount, 2);
 
   const contentCreators = await fetch(`${baseUrl}/api/content-creators`);
   assert.equal(contentCreators.status, 200);
@@ -267,7 +286,8 @@ test("every management operation rejects anonymous and viewer sessions before ha
     ["/api/collection-runs"],
     ["/api/collection-runs/missing"],
     ["/api/collection-settings"],
-    ["/api/collection-settings", { method: "PUT" }]
+    ["/api/collection-settings", { method: "PUT" }],
+    ["/api/content-items/missing/analysis-retry", { method: "POST" }]
   ];
   for (const [path, init] of protectedRequests) {
     const response = await fetch(`${baseUrl}${path}`, init);
@@ -287,6 +307,28 @@ test("every management operation rejects anonymous and viewer sessions before ha
     const response = await fetch(`${baseUrl}${path}`, { headers: { cookie: viewerCookie } });
     assert.equal(response.status, 403, path);
   }
+  const viewerRetry = await fetch(`${baseUrl}/api/content-items/${retryableContentId}/analysis-retry`, { method: "POST", headers: { cookie: viewerCookie } });
+  assert.equal(viewerRetry.status, 403);
+});
+
+test("an administrator can retry one failed content analysis and cannot submit it twice", async () => {
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: process.env.PORTFOLIO_ADMIN_PASSWORD })
+  });
+  const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+  const retry = await fetch(`${baseUrl}/api/content-items/${retryableContentId}/analysis-retry`, { method: "POST", headers: { cookie } });
+  assert.equal(retry.status, 200);
+  const insight = await retry.json() as { content: { id: string; analysisStatus: string; error?: string }; views: unknown[] };
+  assert.equal(insight.content.id, retryableContentId);
+  assert.equal(insight.content.analysisStatus, "success");
+  assert.equal(insight.content.error, undefined);
+  assert.deepEqual(insight.views, []);
+
+  const duplicate = await fetch(`${baseUrl}/api/content-items/${retryableContentId}/analysis-retry`, { method: "POST", headers: { cookie } });
+  assert.equal(duplicate.status, 409);
+  assert.equal((await duplicate.json() as { code: string }).code, "CONTENT_ANALYSIS_NOT_RETRYABLE");
 });
 
 test("webhook keeps its independent bearer-token boundary", async () => {

@@ -5,7 +5,8 @@ import type {
   CollectionRunStatus,
   CollectionRunTrigger,
   CollectionSettings,
-  Creator
+  Creator,
+  DeepSeekModel
 } from "../../shared/types.js";
 import { database, withTransaction } from "../database/connection.js";
 import { optionalString, sqliteBoolean } from "../database/rows.js";
@@ -294,15 +295,23 @@ export function getCollectionSettings(): CollectionSettings {
     localTime: string;
     timezone: "Asia/Shanghai";
     maxVideosPerCreator: number;
+    analysisModel: DeepSeekModel;
     updatedAt: string;
   };
   return { ...row, enabled: sqliteBoolean(row.enabled) };
 }
 
-export function updateCollectionSettings(input: { enabled: boolean; localTime: string; maxVideosPerCreator: number }) {
+export function updateCollectionSettings(input: {
+  enabled: boolean;
+  localTime: string;
+  maxVideosPerCreator: number;
+  analysisModel: DeepSeekModel;
+}) {
   const now = new Date().toISOString();
   database().prepare(`
-    UPDATE collection_settings SET enabled = ?, localTime = ?, maxVideosPerCreator = ?, updatedAt = ? WHERE id = 'owner'
-  `).run(input.enabled ? 1 : 0, input.localTime, input.maxVideosPerCreator, now);
+    UPDATE collection_settings
+    SET enabled = ?, localTime = ?, maxVideosPerCreator = ?, analysisModel = ?, updatedAt = ?
+    WHERE id = 'owner'
+  `).run(input.enabled ? 1 : 0, input.localTime, input.maxVideosPerCreator, input.analysisModel, now);
   return getCollectionSettings();
 }

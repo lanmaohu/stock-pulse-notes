@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import type { DeepSeekModel } from "../shared/types.js";
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stockpulse-db-test-"));
 const databasePath = path.join(directory, "stockpulse.sqlite");
@@ -102,6 +103,9 @@ test("legacy Bilibili data migrates once into the generic model", async () => {
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM content_stock_views").get() as { count: number }).count, 1);
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE name = '2026-08-stability-v1'").get() as { count: number }).count, 1);
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE name = '2026-08-remove-legacy-v1'").get() as { count: number }).count, 1);
+  assert.equal((read.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE name = ?").get(db.latestSchemaMigration) as { count: number }).count, 1);
+  const settingsColumns = read.prepare("PRAGMA table_info(collection_settings)").all() as Array<{ name: string }>;
+  assert.equal(settingsColumns.some((column) => column.name === "analysisModel"), true);
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'index' AND name = 'idx_content_items_published'").get() as { count: number }).count, 1);
   for (const table of ["notes", "daily_summaries", "research_suggestions", "ai_runs", "video_stock_views", "bilibili_videos", "bilibili_creators"]) {
     assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) as { count: number }).count, 0, table);
@@ -119,6 +123,58 @@ test("legacy Bilibili data migrates once into the generic model", async () => {
   const insights = db.listContentInsights();
   assert.equal(insights.insights[0]?.content.creatorName, "笨笨的韭菜");
   assert.equal(insights.insights[0]?.views[0]?.coreView, "关注国产科技产业链");
+});
+
+test("collection settings default to Pro and constrain persisted analysis models", () => {
+  const initial = db.getCollectionSettings();
+  assert.equal(initial.analysisModel, "deepseek-v4-pro");
+
+  const flash = db.updateCollectionSettings({
+    enabled: initial.enabled,
+    localTime: initial.localTime,
+    maxVideosPerCreator: initial.maxVideosPerCreator,
+    analysisModel: "deepseek-v4-flash"
+  });
+  assert.equal(flash.analysisModel, "deepseek-v4-flash");
+  assert.throws(() => db.updateCollectionSettings({
+    enabled: flash.enabled,
+    localTime: flash.localTime,
+    maxVideosPerCreator: flash.maxVideosPerCreator,
+    analysisModel: "deepseek-v4-invalid" as DeepSeekModel
+  }), /CHECK constraint failed/);
+  assert.equal(db.getCollectionSettings().analysisModel, "deepseek-v4-flash");
+
+  db.updateCollectionSettings({
+    enabled: flash.enabled,
+    localTime: flash.localTime,
+    maxVideosPerCreator: flash.maxVideosPerCreator,
+    analysisModel: "deepseek-v4-pro"
+  });
+});
+
+test("rebinding a platform replaces one persisted credential without exposing it", () => {
+  const first = db.upsertPlatformAccount({
+    platform: "xiaohongshu",
+    externalUserId: "first-account",
+    displayName: "首次绑定账号",
+    encryptedCredential: "ciphertext-v1"
+  });
+  const rebound = db.upsertPlatformAccount({
+    platform: "xiaohongshu",
+    externalUserId: "replacement-account",
+    displayName: "重新绑定账号",
+    encryptedCredential: "ciphertext-v2"
+  });
+
+  assert.equal(rebound.id, first.id);
+  const publicAccounts = db.listPlatformAccounts().filter((account) => account.platform === "xiaohongshu");
+  assert.equal(publicAccounts.length, 1);
+  assert.equal(publicAccounts[0]?.externalUserId, "replacement-account");
+  assert.equal(Object.hasOwn(publicAccounts[0] || {}, "credentialsCiphertext"), false);
+
+  const persisted = db.getPlatformAccountWithCredential("xiaohongshu");
+  assert.equal(persisted?.account.id, first.id);
+  assert.equal(persisted?.encryptedCredential, "ciphertext-v2");
 });
 
 test("creator subscriptions and scheduled runs are idempotent", () => {

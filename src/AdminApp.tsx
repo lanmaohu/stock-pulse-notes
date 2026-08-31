@@ -8,7 +8,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useSearchParam
 import type {
   CollectionRun, CollectionRunsResponse, CollectionSettings,
   CollectionSettingsResponse, Creator, CreatorCandidate, CreatorSearchResponse, CreatorsResponse,
-  Platform, PlatformAccount, PlatformAccountsResponse, PlatformOAuthStartResponse, PlatformQrSession
+  DeepSeekModel, Platform, PlatformAccount, PlatformAccountsResponse, PlatformOAuthStartResponse, PlatformQrSession
 } from "../shared/types";
 import { useAdminAuth } from "./AdminAuth";
 import { api } from "./api";
@@ -31,6 +31,10 @@ function Loading({ children }: { children: string }) {
 }
 
 const platforms: Platform[] = ["bilibili", "douyin", "xiaohongshu", "twitter"];
+const analysisModelOptions: Array<{ value: DeepSeekModel; label: string }> = [
+  { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+  { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro" }
+];
 const platformInput: Record<Platform, { hint: string; placeholder: string; idLabel: string }> = {
   bilibili: { hint: "支持主页链接、UID 或博主名称", placeholder: "例如：笨笨的韭菜 或 11473291", idLabel: "UID" },
   douyin: { hint: "支持主页链接、SEC_UID 或博主名称", placeholder: "粘贴抖音主页链接或输入博主名称", idLabel: "SEC_UID" },
@@ -174,11 +178,11 @@ function SettingsView({ settings, onSaved }: { settings: CollectionSettings; onS
   useEffect(() => setDraft(settings), [settings]);
   async function save(event: FormEvent) {
     event.preventDefault(); setBusy(true); setSaved(false); setError("");
-    try { const result = await api<CollectionSettingsResponse>("/api/collection-settings", { method: "PUT", body: JSON.stringify({ enabled: draft.enabled, localTime: draft.localTime, maxVideosPerCreator: draft.maxVideosPerCreator }) }); onSaved(result.settings); setSaved(true); }
+    try { const result = await api<CollectionSettingsResponse>("/api/collection-settings", { method: "PUT", body: JSON.stringify({ enabled: draft.enabled, localTime: draft.localTime, maxVideosPerCreator: draft.maxVideosPerCreator, analysisModel: draft.analysisModel }) }); onSaved(result.settings); setSaved(true); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "保存失败。"); }
     finally { setBusy(false); }
   }
-  return <form className="settings-form" onSubmit={save}><div className="setting-row"><div><strong>每日自动采集</strong><span>Asia/Shanghai</span></div><button type="button" className={`toggle ${draft.enabled ? "active" : ""}`} onClick={() => setDraft((current) => ({ ...current, enabled: !current.enabled }))} role="switch" aria-checked={draft.enabled}><span /></button></div><label className="setting-row" htmlFor="collection-time"><div><strong>执行时间</strong><span>服务重启错过时间后会自动补跑</span></div><input id="collection-time" type="time" value={draft.localTime} onChange={(event) => setDraft((current) => ({ ...current, localTime: event.target.value }))} /></label><label className="setting-row" htmlFor="video-limit"><div><strong>每个博主检查数量</strong><span>范围 1-20</span></div><input id="video-limit" type="number" min="1" max="20" value={draft.maxVideosPerCreator} onChange={(event) => setDraft((current) => ({ ...current, maxVideosPerCreator: Number(event.target.value) }))} /></label>{error ? <div className="inline-error"><AlertTriangle size={17} />{error}</div> : null}<div className="form-actions"><button className="primary-button compact" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : saved ? <CheckCircle2 size={17} /> : <Settings size={17} />}{saved ? "已保存" : "保存设置"}</button></div></form>;
+  return <form className="settings-form" onSubmit={save}><div className="setting-row"><div><strong>每日自动采集</strong><span>Asia/Shanghai</span></div><button type="button" className={`toggle ${draft.enabled ? "active" : ""}`} onClick={() => setDraft((current) => ({ ...current, enabled: !current.enabled }))} role="switch" aria-checked={draft.enabled}><span /></button></div><label className="setting-row" htmlFor="collection-time"><div><strong>执行时间</strong><span>服务重启错过时间后会自动补跑</span></div><input id="collection-time" type="time" value={draft.localTime} onChange={(event) => setDraft((current) => ({ ...current, localTime: event.target.value }))} /></label><label className="setting-row" htmlFor="video-limit"><div><strong>每个博主检查数量</strong><span>范围 1-20</span></div><input id="video-limit" type="number" min="1" max="20" value={draft.maxVideosPerCreator} onChange={(event) => setDraft((current) => ({ ...current, maxVideosPerCreator: Number(event.target.value) }))} /></label><label className="setting-row" htmlFor="analysis-model"><div><strong>内容总结模型</strong><span>用于字幕、正文和元数据的观点提取，仅影响后续分析</span></div><select id="analysis-model" value={draft.analysisModel} onChange={(event) => setDraft((current) => ({ ...current, analysisModel: event.target.value as DeepSeekModel }))}>{analysisModelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{error ? <div className="inline-error"><AlertTriangle size={17} />{error}</div> : null}<div className="form-actions"><button className="primary-button compact" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : saved ? <CheckCircle2 size={17} /> : <Settings size={17} />}{saved ? "已保存" : "保存设置"}</button></div></form>;
 }
 
 function AdminLoginPage() {

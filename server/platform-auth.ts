@@ -6,8 +6,13 @@ import { cancelBilibiliQrSession, createBilibiliQrSession, pollBilibiliQrSession
 import { assertCredentialEncryptionConfigured, encryptCredential } from "./credentials.js";
 import { upsertPlatformAccount } from "./repositories/platform.js";
 import { openPlatformBrowser, pageChallenge, serializeBrowserCredential, type ManagedBrowserSession } from "./platforms/browser.js";
-import { platformAdapter } from "./platforms/index.js";
-import { hasChangedLoginCookie, qrUrlFromPayload } from "./platforms/login-state.js";
+import { checkDouyinAccountPage } from "./platforms/douyin.js";
+import {
+  hasChangedLoginCookie,
+  matchesQrResponsePath,
+  qrUrlFromPayload,
+  webLoginProgress
+} from "./platforms/login-state.js";
 import { PlatformError } from "./platforms/types.js";
 import { checkXiaohongshuAccountPage } from "./platforms/xiaohongshu.js";
 
@@ -25,6 +30,8 @@ interface WebQrState {
   initialLoginCookies?: Record<string, string>;
   qrElementObserved?: boolean;
   loginObservedAt?: number;
+  confirmationAttempts?: number;
+  lastConfirmationAttemptAt?: number;
   polling?: Promise<PlatformQrSession>;
   monitorTimer?: ReturnType<typeof setInterval>;
   expiryTimer?: ReturnType<typeof setTimeout>;
@@ -36,6 +43,7 @@ const specs = {
   douyin: {
     label: "抖音",
     url: "https://creator.douyin.com/",
+    loginSettleMs: 2_000,
     cookieNames: ["sessionid", "sessionid_ss", "sid_guard", "passport_auth_status", "LOGIN_STATUS"],
     qrResponsePath: "/passport/web/get_qrcode/",
     qrSelectors: [
@@ -49,6 +57,7 @@ const specs = {
   xiaohongshu: {
     label: "小红书",
     url: "https://www.xiaohongshu.com/login",
+    loginSettleMs: 5_000,
     cookieNames: ["web_session"],
     qrResponsePath: "/api/sns/web/v1/login/qrcode/create",
     qrSelectors: [".qrcode-img", ".login-container [class*='qrcode'] img", ".login-container canvas", "[class*='qrcode'] img"]
@@ -84,6 +93,13 @@ function cleanSessions() {
     sessions.delete(id);
     void closeState(state);
   }
+}
+
+async function closePendingWebSessions() {
+  const pending = Array.from(sessions.entries())
+    .filter(([, state]) => state.status === "waiting" || state.status === "scanned");
+  for (const [id] of pending) sessions.delete(id);
+  await Promise.all(pending.map(([, state]) => closeState(state)));
 }
 
 async function visibleQr(state: WebQrState) {
@@ -136,6 +152,10 @@ async function waitForQr(state: WebQrState, capturedQrUrl: () => string | undefi
 async function createWebQrSession(platform: WebPlatform, signal?: AbortSignal): Promise<PlatformQrSession> {
   assertCredentialEncryptionConfigured();
   cleanSessions();
+  // The browser is intentionally single-flight. If the admin refreshed the
+  // page while a QR dialog was open, discard that orphaned in-memory session
+  // so a new binding attempt does not remain blocked until expiry.
+  await closePendingWebSessions();
   const browser = await openPlatformBrowser(platform, undefined, signal);
   const state: WebQrState = {
     id: crypto.randomUUID(), platform, status: "waiting", expiresAt: Date.now() + 180 * 1_000, browser
@@ -148,7 +168,7 @@ async function createWebQrSession(platform: WebPlatform, signal?: AbortSignal): 
       let pathname = "";
       try { pathname = new URL(response.url()).pathname; } catch { return; }
       if (/\/passport\/web\/challenge\/?$|\/website-login\/(?:error|captcha)/i.test(pathname)) sawChallenge = true;
-      if (pathname !== specs[platform].qrResponsePath) return;
+      if (!matchesQrResponsePath(response.url(), specs[platform].qrResponsePath)) return;
       void response.json()
         .then((payload) => { qrUrl = qrUrlFromPayload(platform, payload); })
         .catch(() => undefined);
@@ -218,33 +238,59 @@ async function pollWebState(state: WebQrState, signal?: AbortSignal): Promise<Pl
   }
   try {
     if (await pageChallenge(browser.page)) throw new PlatformError("rate_limited", `${specs[state.platform].label}触发了安全验证，请稍后重新绑定。`);
-    if (!await hasLoginCookie(state)) {
-      state.status = state.qrElementObserved && !await visibleQr(state) ? "scanned" : "waiting";
+    const hasFreshLoginCookie = await hasLoginCookie(state);
+    const progress = webLoginProgress({
+      hasFreshLoginCookie,
+      qrElementObserved: Boolean(state.qrElementObserved),
+      qrElementVisible: state.qrElementObserved ? Boolean(await visibleQr(state)) : false
+    });
+    if (progress !== "verify") {
+      state.status = progress;
       return publicSession(state);
     }
-    // Xiaohongshu updates web_session before its post-login redirect and the
-    // remaining account cookies have settled. Keep polling non-blocking while
-    // giving that redirect the same grace period used by maintained clients.
+
+    // Both platforms can set their first authenticated cookie before the page
+    // finishes redirecting and hydrating the current-account controls.
     state.loginObservedAt ||= Date.now();
-    if (state.platform === "xiaohongshu" && Date.now() - state.loginObservedAt < 5_000) {
+    if (Date.now() - state.loginObservedAt < specs[state.platform].loginSettleMs) {
       state.status = "scanned";
       return publicSession(state);
     }
-    const identity = state.platform === "xiaohongshu"
-      ? await checkXiaohongshuAccountPage(browser.page)
-      : undefined;
+
+    if (state.lastConfirmationAttemptAt && Date.now() - state.lastConfirmationAttemptAt < 1_500) {
+      state.status = "scanned";
+      return publicSession(state);
+    }
+    state.lastConfirmationAttemptAt = Date.now();
+    state.confirmationAttempts = (state.confirmationAttempts || 0) + 1;
+
+    let identity;
+    try {
+      identity = state.platform === "xiaohongshu"
+        ? await checkXiaohongshuAccountPage(browser.page)
+        : await checkDouyinAccountPage(browser.page);
+    } catch (error) {
+      const retryable = isNavigationRace(error) || (error instanceof PlatformError && error.code === "platform_error");
+      if (retryable && state.confirmationAttempts < 3 && state.browser && !state.browser.page.isClosed()) {
+        state.status = "scanned";
+        state.error = undefined;
+        return publicSession(state);
+      }
+      throw error;
+    }
+
     const credential = await serializeBrowserCredential(state.platform, browser.context, browser.userAgent);
-    await closeState(state);
-    const confirmedIdentity = identity || await platformAdapter(state.platform).checkAccount(credential, signal);
     state.account = upsertPlatformAccount({
       platform: state.platform,
-      externalUserId: confirmedIdentity.externalUserId,
-      displayName: confirmedIdentity.displayName,
-      avatarUrl: confirmedIdentity.avatarUrl,
+      externalUserId: identity.externalUserId,
+      displayName: identity.displayName,
+      avatarUrl: identity.avatarUrl,
       encryptedCredential: encryptCredential(credential)
     });
     state.status = "confirmed";
     state.qrImageDataUrl = undefined;
+    state.error = undefined;
+    await closeState(state);
     return publicSession(state);
   } catch (error) {
     // A successful scan redirects the login page. If a platform operation

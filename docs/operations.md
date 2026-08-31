@@ -108,7 +108,21 @@ ssh user@server 'pm2 logs stockpulse --lines 100 --nostream'
 ssh user@server 'pm2 logs stockpulse-worker --lines 100 --nostream'
 ```
 
-管理后台手工触发一次采集，确认任务最终为 `success` 或可解释的 `partial`，并检查 AI 日志中的模型为 `deepseek-v4-pro`。
+管理后台手工触发一次采集，确认任务最终为 `success` 或可解释的 `partial`，并检查 AI 日志中的模型与“采集设置”当前选择一致。
+
+### 平台账号接入验收
+
+首次启用或调整抖音、小红书登录逻辑后，使用管理员账号完成以下小流量验收：
+
+1. 打开 `/admin/accounts`，分别生成小红书和抖音二维码；确认界面依次显示“等待扫码”“已扫码，请在手机确认”“已绑定”。
+2. 扫码后核对页面展示的昵称和平台用户 ID，再点击“检查”，状态应保持“已连接”。遇到滑块、短信或其他安全验证时在平台要求的页面人工完成，不启用自动绕过。
+3. 每个平台添加一个公开博主，并在“采集设置”中将每个博主检查数量暂时设为 `5`；各手工执行一次采集，确认任务完成且内容可在公开观点页读取。
+4. 依次重启 `stockpulse` 和 `stockpulse-worker`，再次执行账号检查与单博主采集，确认 SQLite 中保存的加密登录态在进程重启后仍可用。
+5. 关闭一个未扫码的二维码弹窗并立即重新生成，确认旧会话已取消；等待一个二维码自然过期，确认过期会话不能继续确认。
+6. 查看最近日志和 `GET /api/platform-accounts` 的响应，确认其中没有 Cookie、浏览器 `storageState`、二维码图片或 `credentialsCiphertext`。二维码及平台账号响应必须带有 `Cache-Control: no-store`。
+7. 完成验收后再恢复正式的采集数量和每日定时任务。若平台账号提示“需要重新登录”，只需重新扫码绑定；已采集内容与博主订阅不会被删除。
+
+每个平台只保留一个管理员采集账号。重新绑定会更新原记录，不会创建第二个同平台账号。`PLATFORM_CREDENTIALS_KEY` 必须跨发布、API 重启和 Worker 重启保持不变，否则所有已保存登录态都需要重新绑定。
 
 ## 3. 健康检查与诊断
 
@@ -213,13 +227,15 @@ Worker 正常退出会释放当前租约，未完成 item 回到 queued。不要
 
 ### DeepSeek 失败
 
-- `configuration`：检查 `AI_MODEL=deepseek-v4-pro` 和 `DEEPSEEK_API_KEY`；
+- `configuration`：检查 `DEEPSEEK_API_KEY`，并确认“采集设置”中的模型为 `deepseek-v4-flash` 或 `deepseek-v4-pro`；
 - `authentication`：密钥无效，不会自动重试；
 - `rate_limited`：等待配额恢复后重新采集；
 - `timeout`、`upstream`：系统已有限重试，持续发生时查看 DeepSeek 状态；
 - `invalid_response`：同一模型修复仍失败，可重新采集单条内容。
 
 日志只包含 content ID、模型、耗时、token 和错误码，不应粘贴字幕或密钥排查。
+
+模型设置统一用于字幕、正文和仅元数据的观点提取。切换后只影响尚未开始或未成功的后续分析；已经成功的历史内容不会自动重跑。旧部署中残留的 `AI_MODEL` 环境变量会被忽略。
 
 ### B 站账号失效
 

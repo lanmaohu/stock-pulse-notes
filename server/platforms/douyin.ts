@@ -142,10 +142,24 @@ async function currentProfileId(page: Page) {
       isAccountControl: Boolean(node.closest("header, nav") || node.getAttribute("data-e2e")?.includes("user-avatar"))
     };
   })).catch(() => []);
-  for (const link of [...links.filter((item) => item.isAccountControl), ...links]) {
+  return trustedDouyinAccountProfileId(links);
+}
+
+export function trustedDouyinAccountProfileId(links: Array<{ href: string; isAccountControl: boolean }>) {
+  for (const link of links.filter((item) => item.isAccountControl)) {
     const externalId = profileId(link.href);
     if (externalId) return externalId;
   }
+  return "";
+}
+
+async function waitForCurrentProfileId(page: Page, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const externalId = await currentProfileId(page);
+    if (externalId) return externalId;
+    await page.waitForTimeout(300);
+  } while (Date.now() < deadline);
   return "";
 }
 
@@ -165,16 +179,25 @@ async function resolveOnPage(page: Page, externalId: string) {
   return { platform: "douyin", externalId, name, profileUrl: `${baseUrl}/user/${encodeURIComponent(externalId)}` } satisfies CreatorCandidate;
 }
 
-async function checkAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity> {
-  return withPlatformBrowser("douyin", credential, async ({ page }) => {
-    if (!await cookiesLoggedIn(page)) throw new PlatformError("auth_required", "抖音登录状态已失效，请重新扫码绑定。");
-    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
-    await assertUsablePage(page, "抖音");
-    const externalId = await currentProfileId(page);
-    if (!externalId) throw new PlatformError("platform_error", "无法读取当前抖音账号，请重新扫码绑定。");
+export async function checkDouyinAccountPage(page: Page): Promise<PlatformAccountIdentity> {
+  if (!await cookiesLoggedIn(page)) throw new PlatformError("auth_required", "抖音登录状态已失效，请重新扫码绑定。");
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await assertUsablePage(page, "抖音");
+  const externalId = await waitForCurrentProfileId(page);
+  if (!externalId) throw new PlatformError("platform_error", "无法读取当前抖音账号，请重新扫码绑定。");
+  try {
     const candidate = await resolveOnPage(page, externalId);
     return { externalUserId: candidate.externalId, displayName: candidate.name, avatarUrl: candidate.avatarUrl };
-  }, signal);
+  } catch (error) {
+    if (error instanceof PlatformError && error.code === "creator_not_found") {
+      throw new PlatformError("platform_error", "无法读取当前抖音账号，请重新扫码绑定。");
+    }
+    throw error;
+  }
+}
+
+async function checkAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity> {
+  return withPlatformBrowser("douyin", credential, ({ page }) => checkDouyinAccountPage(page), signal);
 }
 
 async function searchCreators(query: string, credential: string, signal?: AbortSignal) {

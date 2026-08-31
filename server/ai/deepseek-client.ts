@@ -1,3 +1,4 @@
+import { defaultDeepSeekModel, type DeepSeekModel } from "../../shared/types.js";
 import { aiConfig, requiredSecret } from "../config.js";
 import { fetchWithPolicy } from "../http-client.js";
 import { AiError, type AiClient, type AiCompletion, type AiCompletionOptions, type AiMessage } from "./types.js";
@@ -32,8 +33,11 @@ function requestFailure(error: unknown, signal?: AbortSignal) {
   return new AiError("upstream", "DeepSeek request could not be completed.");
 }
 
-export function createDeepSeekClient(request: RequestFunction = fetchWithPolicy): AiClient {
-  const config = aiConfig();
+export function createDeepSeekClient(
+  model: DeepSeekModel = defaultDeepSeekModel,
+  request: RequestFunction = fetchWithPolicy
+): AiClient {
+  const config = aiConfig(model);
   return {
     model: config.model,
     async completeJson(messages: AiMessage[], options: AiCompletionOptions = {}): Promise<AiCompletion> {

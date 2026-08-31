@@ -7,9 +7,10 @@ import { databasePath } from "../config.js";
 import { schemaProblems } from "./schema.js";
 import { createVerifiedBackup, databaseSourceHash, verifyBackup, type BackupVerification } from "../operations/backup.js";
 
-export const latestSchemaMigration = "2026-08-ops-v1";
+export const latestSchemaMigration = "2026-08-analysis-model-v1";
 export const legacyRemovalMigration = "2026-08-remove-legacy-v1";
 const baseSchemaMigration = "2026-08-stability-v1";
+const operationsSchemaMigration = "2026-08-ops-v1";
 const legacyMediaMigration = "2026-07-media-monitor-v1";
 const legacyTables = [
   "notes",
@@ -167,6 +168,8 @@ function applyBaseSchema(connection: DatabaseSync) {
       localTime TEXT NOT NULL,
       timezone TEXT NOT NULL,
       maxVideosPerCreator INTEGER NOT NULL,
+      analysisModel TEXT NOT NULL DEFAULT 'deepseek-v4-pro'
+        CHECK(analysisModel IN ('deepseek-v4-flash', 'deepseek-v4-pro')),
       updatedAt TEXT NOT NULL
     );
 
@@ -257,8 +260,8 @@ function applyBaseSchema(connection: DatabaseSync) {
     : "07:30";
   connection.prepare(`
     INSERT OR IGNORE INTO collection_settings
-      (id, enabled, localTime, timezone, maxVideosPerCreator, updatedAt)
-    VALUES ('owner', 1, ?, 'Asia/Shanghai', 5, ?)
+      (id, enabled, localTime, timezone, maxVideosPerCreator, analysisModel, updatedAt)
+    VALUES ('owner', 1, ?, 'Asia/Shanghai', 5, 'deepseek-v4-pro', ?)
   `).run(configuredTime, now);
 
   if (!connection.prepare("SELECT 1 FROM portfolio_snapshots WHERE status = 'draft'").get()) {
@@ -287,6 +290,16 @@ function applyOperationsSchema(connection: DatabaseSync) {
       heartbeatAt TEXT NOT NULL
     );
   `);
+}
+
+function applyAnalysisModelSchema(connection: DatabaseSync) {
+  const columns = connection.prepare("PRAGMA table_info(collection_settings)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "analysisModel")) {
+    connection.exec(`
+      ALTER TABLE collection_settings ADD COLUMN analysisModel TEXT NOT NULL DEFAULT 'deepseek-v4-pro'
+        CHECK(analysisModel IN ('deepseek-v4-flash', 'deepseek-v4-pro'))
+    `);
+  }
 }
 
 type LegacyCreatorRow = { mid: string; name: string; lastCollectedAt: string | null; createdAt: string; updatedAt: string };
@@ -450,7 +463,8 @@ export async function ensureDatabase() {
   const connection = database();
   connection.exec("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, appliedAt TEXT NOT NULL)");
   runMigration(connection, baseSchemaMigration, applyBaseSchema);
-  runMigration(connection, latestSchemaMigration, applyOperationsSchema);
+  runMigration(connection, operationsSchemaMigration, applyOperationsSchema);
+  runMigration(connection, latestSchemaMigration, applyAnalysisModelSchema);
   if (!applied(connection, legacyRemovalMigration)) {
     await verifiedLegacyBackup(connection);
     runMigration(connection, legacyRemovalMigration, applyLegacyRemoval);
@@ -461,7 +475,7 @@ export async function ensureDatabase() {
 
 export async function verifyDatabaseSchema() {
   await fsp.mkdir(databaseDirectory, { recursive: true });
-  const problems = schemaProblems(database(), latestSchemaMigration, legacyRemovalMigration);
+  const problems = schemaProblems(database(), operationsSchemaMigration, latestSchemaMigration, legacyRemovalMigration);
   if (problems.length) throw new Error(`Database schema is not current (${problems.join(", ")}). Run npm run migrate first.`);
   schemaReady = true;
 }

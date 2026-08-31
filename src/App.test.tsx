@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 
@@ -254,6 +254,46 @@ describe("application routes", () => {
     expect(requests).not.toContain("/api/collection-settings");
   });
 
+  test("collection settings display and save the selected DeepSeek analysis model", async () => {
+    window.history.replaceState({}, "", "/admin/settings");
+    const settings = {
+      enabled: true,
+      localTime: "07:30",
+      timezone: "Asia/Shanghai",
+      maxVideosPerCreator: 5,
+      analysisModel: "deepseek-v4-pro",
+      updatedAt: "2026-08-31T00:00:00.000Z"
+    };
+    let savedBody: Record<string, unknown> | undefined;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, options?: RequestInit) => {
+      const path = String(input);
+      const method = options?.method || "GET";
+      if (path === "/api/auth/session") return json({ authenticated: true });
+      if (path === "/api/collection-settings" && method === "GET") return json({ settings });
+      if (path === "/api/collection-settings" && method === "PUT") {
+        savedBody = JSON.parse(String(options?.body)) as Record<string, unknown>;
+        return json({ settings: { ...settings, ...savedBody, updatedAt: "2026-08-31T01:00:00.000Z" } });
+      }
+      throw new Error(`Unexpected request ${method} ${path}`);
+    }));
+
+    render(<App />);
+    const modelSelect = await screen.findByLabelText(/内容总结模型/);
+    expect(modelSelect).toHaveValue("deepseek-v4-pro");
+    expect(screen.getByText("用于字幕、正文和元数据的观点提取，仅影响后续分析")).toBeInTheDocument();
+    fireEvent.change(modelSelect, { target: { value: "deepseek-v4-flash" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    await screen.findByRole("button", { name: "已保存" });
+    expect(savedBody).toMatchObject({
+      enabled: true,
+      localTime: "07:30",
+      maxVideosPerCreator: 5,
+      analysisModel: "deepseek-v4-flash"
+    });
+    expect(modelSelect).toHaveValue("deepseek-v4-flash");
+  });
+
   test("platform accounts page offers QR and OAuth binding for all four sources", async () => {
     window.history.replaceState({}, "", "/admin/accounts?twitter=credits");
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
@@ -272,5 +312,60 @@ describe("application routes", () => {
     expect(screen.getByText("Twitter/X")).toBeInTheDocument();
     expect(screen.getByText("Twitter/X API 额度不足，请在 X Developer Console 充值后重新授权。")).toBeInTheDocument();
     expect(screen.queryByText("后续版本")).not.toBeInTheDocument();
+  });
+
+  test("an administrator can complete a Xiaohongshu QR binding and refresh the persisted account", async () => {
+    window.history.replaceState({}, "", "/admin/accounts");
+    const now = "2026-08-25T10:00:00.000Z";
+    const account = {
+      id: "xhs-account",
+      platform: "xiaohongshu",
+      externalUserId: "66abcdeffedcba0011223344",
+      displayName: "测试小红书账号",
+      status: "connected",
+      lastCheckedAt: now,
+      createdAt: now,
+      updatedAt: now
+    };
+    let accountReads = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, options?: RequestInit) => {
+      const path = String(input);
+      const method = options?.method || "GET";
+      if (path === "/api/auth/session") return json({ authenticated: true });
+      if (path === "/api/platform-accounts" && method === "GET") {
+        accountReads += 1;
+        return json({ accounts: accountReads === 1 ? [] : [account] });
+      }
+      if (path === "/api/platform-accounts/xiaohongshu/qr" && method === "POST") {
+        return json({
+          platform: "xiaohongshu",
+          sessionId: "qr-session",
+          qrImageDataUrl: "data:image/png;base64,dGVzdA==",
+          status: "waiting",
+          expiresAt: "2026-08-25T10:03:00.000Z"
+        }, 201);
+      }
+      if (path === "/api/platform-accounts/xiaohongshu/qr/qr-session" && method === "GET") {
+        return json({
+          platform: "xiaohongshu",
+          sessionId: "qr-session",
+          status: "confirmed",
+          expiresAt: "2026-08-25T10:03:00.000Z",
+          account
+        });
+      }
+      throw new Error(`Unexpected request ${method} ${path}`);
+    }));
+
+    render(<App />);
+    const platformName = await screen.findByText("小红书");
+    const row = platformName.closest(".account-row");
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "扫码绑定" }));
+
+    expect(await screen.findByAltText("小红书登录二维码")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("已绑定 测试小红书账号")).toBeInTheDocument(), { timeout: 3_500 });
+    await waitFor(() => expect(accountReads).toBe(2));
+    expect(screen.getByText(/测试小红书账号 · 用户 ID/)).toBeInTheDocument();
   });
 });

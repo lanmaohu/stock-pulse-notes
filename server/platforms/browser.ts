@@ -41,6 +41,7 @@ export interface ManagedBrowserSession {
 
 const activeSessions = new Set<ManagedBrowserSession>();
 let browserBusy = false;
+const maxCredentialBytes = 2 * 1024 * 1024;
 
 function webPlatform(platform: Platform): asserts platform is "douyin" | "xiaohongshu" {
   if (platform === "bilibili" || platform === "twitter") {
@@ -48,8 +49,33 @@ function webPlatform(platform: Platform): asserts platform is "douyin" | "xiaoho
   }
 }
 
+function validStoredCookie(value: unknown): value is BrowserStorageState["cookies"][number] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const cookie = value as Partial<BrowserStorageState["cookies"][number]>;
+  return typeof cookie.name === "string" && cookie.name.length > 0 && cookie.name.length <= 256 &&
+    typeof cookie.value === "string" && cookie.value.length <= 16_384 &&
+    typeof cookie.domain === "string" && cookie.domain.length > 0 && cookie.domain.length <= 512 &&
+    typeof cookie.path === "string" && cookie.path.startsWith("/") && cookie.path.length <= 2_048 &&
+    typeof cookie.expires === "number" && Number.isFinite(cookie.expires) &&
+    typeof cookie.httpOnly === "boolean" && typeof cookie.secure === "boolean" &&
+    (cookie.sameSite === "Strict" || cookie.sameSite === "Lax" || cookie.sameSite === "None");
+}
+
+function validStoredOrigin(value: unknown): value is BrowserStorageState["origins"][number] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const origin = value as Partial<BrowserStorageState["origins"][number]>;
+  if (typeof origin.origin !== "string" || origin.origin.length > 2_048 || !/^https?:\/\//i.test(origin.origin)) return false;
+  if (!Array.isArray(origin.localStorage) || origin.localStorage.length > 500) return false;
+  return origin.localStorage.every((entry) => Boolean(entry) && typeof entry === "object" &&
+    typeof entry.name === "string" && entry.name.length > 0 && entry.name.length <= 1_024 &&
+    typeof entry.value === "string" && entry.value.length <= 256_000);
+}
+
 export function parseBrowserCredential(platform: Platform, credential: string): BrowserCredentialEnvelope {
   webPlatform(platform);
+  if (Buffer.byteLength(credential, "utf8") > maxCredentialBytes) {
+    throw new PlatformError("auth_required", "平台登录凭证格式无效，请重新扫码绑定。");
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(credential);
@@ -59,8 +85,11 @@ export function parseBrowserCredential(platform: Platform, credential: string): 
   const candidate = parsed as Partial<BrowserCredentialEnvelope> | null;
   if (
     !candidate || candidate.version !== 1 || candidate.platform !== platform ||
-    typeof candidate.userAgent !== "string" || !candidate.userAgent ||
-    !candidate.storageState || !Array.isArray(candidate.storageState.cookies) || !Array.isArray(candidate.storageState.origins)
+    typeof candidate.userAgent !== "string" || !candidate.userAgent || candidate.userAgent.length > 1_024 ||
+    !candidate.storageState || !Array.isArray(candidate.storageState.cookies) || candidate.storageState.cookies.length > 500 ||
+    !Array.isArray(candidate.storageState.origins) || candidate.storageState.origins.length > 50 ||
+    !candidate.storageState.cookies.every(validStoredCookie) ||
+    !candidate.storageState.origins.every(validStoredOrigin)
   ) {
     throw new PlatformError("auth_required", "平台登录凭证格式无效，请重新扫码绑定。");
   }

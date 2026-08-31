@@ -1,12 +1,11 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { deepSeekModels, defaultDeepSeekModel, type DeepSeekModel } from "../shared/types.js";
 import { assertCredentialEncryptionConfigured } from "./credentials.js";
-
-export const deepSeekModel = "deepseek-v4-pro" as const;
 
 export interface AiConfig {
   provider: "deepseek";
-  model: typeof deepSeekModel;
+  model: DeepSeekModel;
   endpoint: "https://api.deepseek.com/chat/completions";
   timeoutMs: number;
   maxOutputTokens: number;
@@ -175,17 +174,11 @@ export function releaseId() {
   return process.env.STOCKPULSE_RELEASE?.trim().slice(0, 100) || "development";
 }
 
-export function aiConfig(): AiConfig {
-  const configuredModel = process.env.AI_MODEL?.trim() || deepSeekModel;
-  if (configuredModel !== deepSeekModel) {
-    const legacyHint = configuredModel === "deepseek-chat" || configuredModel === "deepseek-reasoner"
-      ? " Legacy DeepSeek model aliases are no longer supported."
-      : "";
-    throw new Error(`AI_MODEL must be ${deepSeekModel}.${legacyHint}`);
-  }
+export function aiConfig(model: DeepSeekModel = defaultDeepSeekModel): AiConfig {
+  if (!deepSeekModels.includes(model)) throw new Error(`Unsupported DeepSeek model: ${model}.`);
   return {
     provider: "deepseek",
-    model: deepSeekModel,
+    model,
     endpoint: "https://api.deepseek.com/chat/completions",
     timeoutMs: 90_000,
     maxOutputTokens: 6_000
@@ -215,5 +208,4 @@ export function validateWorkerEnvironment() {
   platformBrowserProxy();
   validateSharedSecrets();
   requiredSecret("DEEPSEEK_API_KEY");
-  aiConfig();
 }

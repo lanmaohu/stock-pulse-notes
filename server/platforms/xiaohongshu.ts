@@ -125,10 +125,13 @@ async function currentProfileId(page: Page) {
       inNavigation: Boolean(node.closest("header, nav, [class*='sidebar'], [class*='user-info']"))
     };
   })).catch(() => []);
+  return trustedXiaohongshuAccountProfileId(links);
+}
+
+export function trustedXiaohongshuAccountProfileId(links: Array<{ href: string; text: string; inNavigation: boolean }>) {
   const ordered = [
     ...links.filter((link) => link.text === "我"),
-    ...links.filter((link) => link.inNavigation),
-    ...links
+    ...links.filter((link) => link.inNavigation)
   ];
   for (const link of ordered) {
     const externalId = profileId(link.href);
@@ -171,20 +174,31 @@ export async function checkXiaohongshuAccountPage(page: Page): Promise<PlatformA
   // navigation while its client application is still hydrating.
   let externalId = await waitForCurrentProfileId(page);
   if (externalId) {
-    const candidate = await resolveOnPage(page, externalId);
-    return { externalUserId: candidate.externalId, displayName: candidate.name, avatarUrl: candidate.avatarUrl };
+    try {
+      const candidate = await resolveOnPage(page, externalId);
+      return { externalUserId: candidate.externalId, displayName: candidate.name, avatarUrl: candidate.avatarUrl };
+    } catch (error) {
+      if (!(error instanceof PlatformError) || error.code !== "creator_not_found") throw error;
+    }
   }
 
   const payloads = await capturePageJson(page, async () => {
     await page.goto(`${baseUrl}/explore`, { waitUntil: "domcontentloaded" });
-  }, (url) => /\/user\/(?:selfinfo|me)|otherinfo/i.test(url), 2_500);
+  }, (url) => /\/user\/(?:selfinfo|me)(?:[/?]|$)/i.test(url), 2_500);
   await assertUsablePage(page, "小红书");
   const self = parseXiaohongshuUsers(payloads)[0];
   if (self) return { externalUserId: self.externalId, displayName: self.name, avatarUrl: self.avatarUrl };
   externalId = await waitForCurrentProfileId(page, 3_000);
   if (!externalId) throw new PlatformError("platform_error", "无法读取当前小红书账号，请重新扫码绑定。");
-  const candidate = await resolveOnPage(page, externalId);
-  return { externalUserId: candidate.externalId, displayName: candidate.name, avatarUrl: candidate.avatarUrl };
+  try {
+    const candidate = await resolveOnPage(page, externalId);
+    return { externalUserId: candidate.externalId, displayName: candidate.name, avatarUrl: candidate.avatarUrl };
+  } catch (error) {
+    if (error instanceof PlatformError && error.code === "creator_not_found") {
+      throw new PlatformError("platform_error", "无法读取当前小红书账号，请重新扫码绑定。");
+    }
+    throw error;
+  }
 }
 
 async function checkAccount(credential: string, signal?: AbortSignal): Promise<PlatformAccountIdentity> {

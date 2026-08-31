@@ -61,7 +61,6 @@ PORTFOLIO_VIEW_PASSWORD=change-this-view-password
 PORTFOLIO_ADMIN_PASSWORD=change-this-admin-password
 PLATFORM_CREDENTIALS_KEY=replace-with-a-base64-encoded-32-byte-key
 WEBHOOK_TOKEN=replace-with-a-long-random-webhook-token
-AI_MODEL=deepseek-v4-pro
 DEEPSEEK_API_KEY=your-deepseek-api-key
 BILIBILI_COLLECT_CRON_TIME=07:30
 BILIBILI_COOKIE=
@@ -83,7 +82,8 @@ TWITTER_OAUTH_CALLBACK_URL=https://stockpulse.com.cn/api/platform-oauth/twitter/
 - 会话令牌绑定对应密码版本，密码改变后旧会话立即失效。
 - 登录失败次数保存在 SQLite；同一 IP 15 分钟最多失败 5 次。
 - `PLATFORM_CREDENTIALS_KEY` 必须是 32 字节 Base64 或 64 位十六进制字符串。
-- `AI_MODEL` 固定为 `deepseek-v4-pro`；旧的 `deepseek-chat`、`deepseek-reasoner` 别名不再接受。
+- DeepSeek 模型在管理后台“采集设置”中选择，支持 `deepseek-v4-flash` 和 `deepseek-v4-pro`；默认使用 Pro。切换只影响尚未开始或未成功的后续分析，不会重跑已经成功的历史内容。
+- `DEEPSEEK_API_KEY` 供两个模型共用；旧部署中残留的 `AI_MODEL` 会被忽略。
 - 每日备份默认在 Asia/Shanghai 03:15 执行，保留 30 天且至少保留最近 7 份。
 - `BILIBILI_COLLECT_CRON_TIME` 只用于首次初始化，之后由管理后台设置。
 - `BILIBILI_COOKIE` 仅作旧部署回退，正常使用扫码保存的加密凭据。

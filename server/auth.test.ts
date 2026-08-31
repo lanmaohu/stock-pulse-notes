@@ -189,11 +189,60 @@ test("workspace administrator login shares the portfolio administrator session",
   for (const path of ["/api/platform-accounts", "/api/creators", "/api/collection-runs", "/api/collection-settings"]) {
     const response = await fetch(`${baseUrl}${path}`, { headers: { cookie: adminCookie } });
     assert.equal(response.status, 200, path);
+    if (path === "/api/platform-accounts") assert.equal(response.headers.get("cache-control"), "no-store");
   }
 
   const logout = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { cookie: adminCookie } });
   assert.equal(logout.status, 200);
   assert.deepEqual(await logout.json(), { authenticated: false });
+});
+
+test("administrator can select an analysis model and legacy updates preserve it", async () => {
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: process.env.PORTFOLIO_ADMIN_PASSWORD })
+  });
+  assert.equal(login.status, 200);
+  const adminCookie = login.headers.get("set-cookie")!.split(";")[0]!;
+  const headers = { "Content-Type": "application/json", cookie: adminCookie };
+
+  const initial = await fetch(`${baseUrl}/api/collection-settings`, { headers: { cookie: adminCookie } });
+  const initialSettings = (await initial.json() as { settings: { analysisModel: string } }).settings;
+  assert.equal(initialSettings.analysisModel, "deepseek-v4-pro");
+
+  const selected = await fetch(`${baseUrl}/api/collection-settings`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ enabled: true, localTime: "07:30", maxVideosPerCreator: 5, analysisModel: "deepseek-v4-flash" })
+  });
+  assert.equal(selected.status, 200);
+  assert.equal((await selected.json() as { settings: { analysisModel: string } }).settings.analysisModel, "deepseek-v4-flash");
+
+  const legacyUpdate = await fetch(`${baseUrl}/api/collection-settings`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ enabled: true, localTime: "08:15", maxVideosPerCreator: 6 })
+  });
+  const legacySettings = (await legacyUpdate.json() as { settings: { analysisModel: string; localTime: string } }).settings;
+  assert.equal(legacyUpdate.status, 200);
+  assert.equal(legacySettings.analysisModel, "deepseek-v4-flash");
+  assert.equal(legacySettings.localTime, "08:15");
+
+  const invalid = await fetch(`${baseUrl}/api/collection-settings`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ enabled: true, localTime: "07:30", maxVideosPerCreator: 5, analysisModel: "deepseek-v4-invalid" })
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json() as { code: string }).code, "INVALID_COLLECTION_SETTINGS");
+
+  const restore = await fetch(`${baseUrl}/api/collection-settings`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ enabled: true, localTime: "07:30", maxVideosPerCreator: 5, analysisModel: "deepseek-v4-pro" })
+  });
+  assert.equal(restore.status, 200);
 });
 
 test("every management operation rejects anonymous and viewer sessions before handling input", async () => {

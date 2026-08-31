@@ -12,7 +12,9 @@ function validQrUrl(value: unknown) {
   return trimmed.length > 0 && trimmed.length <= 8_192 && /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : undefined;
 }
 
-export function qrUrlFromPayload(platform: Exclude<Platform, "bilibili">, payload: unknown) {
+type WebPlatform = Extract<Platform, "douyin" | "xiaohongshu">;
+
+export function qrUrlFromPayload(platform: WebPlatform, payload: unknown) {
   const outer = record(payload);
   const data = record(outer?.data);
   const containers = [data, outer].filter((item): item is JsonRecord => Boolean(item));
@@ -26,6 +28,16 @@ export function qrUrlFromPayload(platform: Exclude<Platform, "bilibili">, payloa
     }
   }
   return undefined;
+}
+
+export function matchesQrResponsePath(responseUrl: string, expectedPath: string) {
+  try {
+    const actual = new URL(responseUrl).pathname.replace(/\/+$/, "");
+    const expected = expectedPath.replace(/\/+$/, "");
+    return actual === expected;
+  } catch {
+    return false;
+  }
 }
 
 export function pageLooksChallenged(input: {
@@ -45,4 +57,14 @@ export function hasChangedLoginCookie(
   acceptedNames: readonly string[]
 ) {
   return cookies.some((cookie) => acceptedNames.includes(cookie.name) && Boolean(cookie.value) && initial[cookie.name] !== cookie.value);
+}
+
+export function webLoginProgress(input: {
+  hasFreshLoginCookie: boolean;
+  qrElementObserved: boolean;
+  qrElementVisible: boolean;
+}): "waiting" | "scanned" | "verify" {
+  if (input.hasFreshLoginCookie) return "verify";
+  if (input.qrElementObserved && !input.qrElementVisible) return "scanned";
+  return "waiting";
 }

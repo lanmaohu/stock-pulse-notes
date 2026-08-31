@@ -113,7 +113,7 @@ export function createCollectionProcessor(overrides: Partial<CollectionProcessor
         if (saved.content.analysisStatus !== "success") {
           dependencies.markAnalysis(saved.content.id, "running");
           try {
-            const views = await dependencies.analyze(saved.content, { signal });
+            const views = await dependencies.analyze(saved.content, { signal, model: settings.analysisModel });
             assertActive(signal);
             dependencies.saveViews(saved.content, views);
             analyzedCount += 1;

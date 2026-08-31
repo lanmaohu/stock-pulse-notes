@@ -22,6 +22,7 @@ const requiredColumns: Record<string, string[]> = {
   content_stock_views: ["contentId", "model", "confidence", "sourceSnippet"],
   collection_runs: ["status", "leaseOwner", "leaseExpiresAt"],
   collection_run_items: ["runId", "status", "errorCode"],
+  collection_settings: ["analysisModel"],
   portfolio_snapshots: ["status", "publishedAt"],
   service_heartbeats: ["serviceName", "instanceId", "status", "startedAt", "heartbeatAt"]
 };

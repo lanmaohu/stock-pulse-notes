@@ -1,4 +1,4 @@
-import type { ContentItem, ContentStockView } from "../../shared/types.js";
+import type { ContentItem, ContentStockView, DeepSeekModel } from "../../shared/types.js";
 import type { ContentStockViewInput } from "../repositories/content.js";
 import { createDeepSeekClient } from "./deepseek-client.js";
 import { AiError, type AiClient, type AiMessage, type AiUsage } from "./types.js";
@@ -10,6 +10,7 @@ interface ContentAiPayload {
 
 export interface ContentAnalysisOptions {
   client?: AiClient;
+  model?: DeepSeekModel;
   signal?: AbortSignal;
   log?: (entry: Record<string, unknown>) => void;
 }
@@ -166,7 +167,7 @@ export async function analyzeContentStockViews(
   options: ContentAnalysisOptions = {}
 ): Promise<ContentStockViewInput[]> {
   if (!content.transcript.trim()) return [];
-  const client = options.client || createDeepSeekClient();
+  const client = options.client || createDeepSeekClient(options.model);
   const startedAt = performance.now();
   let usage: AiUsage = {};
   let repaired = false;

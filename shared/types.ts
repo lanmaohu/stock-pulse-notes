@@ -10,6 +10,9 @@ export interface ChatMessage {
 
 export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "twitter";
 export type PlatformAccountStatus = "connected" | "needs_reauth" | "checking" | "error";
+export const deepSeekModels = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
+export type DeepSeekModel = typeof deepSeekModels[number];
+export const defaultDeepSeekModel: DeepSeekModel = "deepseek-v4-pro";
 
 export interface PlatformAccount {
   id: string;
@@ -154,6 +157,7 @@ export interface CollectionSettings {
   localTime: string;
   timezone: "Asia/Shanghai";
   maxVideosPerCreator: number;
+  analysisModel: DeepSeekModel;
   updatedAt: string;
 }
 

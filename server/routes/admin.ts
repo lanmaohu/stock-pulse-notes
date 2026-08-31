@@ -1,10 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import type {
-  CollectionRunsResponse,
-  CollectionSettingsResponse,
-  CreatorSearchResponse,
-  CreatorsResponse,
-  PlatformAccountsResponse
+import {
+  deepSeekModels,
+  type DeepSeekModel,
+  type CollectionRunsResponse,
+  type CollectionSettingsResponse,
+  type CreatorSearchResponse,
+  type CreatorsResponse,
+  type PlatformAccountsResponse
 } from "../../shared/types.js";
 import { requireAdmin } from "../auth.js";
 import { encryptCredential } from "../credentials.js";
@@ -67,6 +69,11 @@ adminRouter.use((req, res, next) => {
   if (protectedPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
     return requireAdmin(req, res, next);
   }
+  next();
+});
+
+adminRouter.use("/platform-accounts", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
   next();
 });
 
@@ -229,12 +236,19 @@ adminRouter.get("/collection-settings", (_req, res: Response<CollectionSettingsR
 });
 
 adminRouter.put("/collection-settings", (req, res: Response<CollectionSettingsResponse>) => {
+  const current = getCollectionSettings();
   const enabled = typeof req.body?.enabled === "boolean" ? req.body.enabled : null;
   const localTime = typeof req.body?.localTime === "string" ? req.body.localTime : "";
   const maxVideosPerCreator = Number(req.body?.maxVideosPerCreator);
+  const requestedModel = req.body?.analysisModel;
+  const analysisModel = requestedModel === undefined
+    ? current.analysisModel
+    : typeof requestedModel === "string" && deepSeekModels.includes(requestedModel as DeepSeekModel)
+      ? requestedModel as DeepSeekModel
+      : null;
   const timeMatch = localTime.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
-  if (enabled === null || !timeMatch || !Number.isInteger(maxVideosPerCreator) || maxVideosPerCreator < 1 || maxVideosPerCreator > 20) {
+  if (enabled === null || !timeMatch || !Number.isInteger(maxVideosPerCreator) || maxVideosPerCreator < 1 || maxVideosPerCreator > 20 || analysisModel === null) {
     throw new HttpError(400, "采集设置格式不正确。", "INVALID_COLLECTION_SETTINGS");
   }
-  res.json({ settings: updateCollectionSettings({ enabled, localTime, maxVideosPerCreator }) });
+  res.json({ settings: updateCollectionSettings({ enabled, localTime, maxVideosPerCreator, analysisModel }) });
 });

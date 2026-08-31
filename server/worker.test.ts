@@ -68,6 +68,7 @@ test("scheduler injects its clock and enqueues at most once per local day", () =
       localTime: "07:30",
       timezone: "Asia/Shanghai",
       maxVideosPerCreator: 5,
+      analysisModel: "deepseek-v4-pro",
       updatedAt: "2026-08-16T00:00:00.000Z"
     }),
     enqueue: () => {
@@ -84,8 +85,9 @@ test("worker stop reason is explicit and non-retryable by the processor", () => 
   assert.equal(new WorkerStoppedError().name, "WorkerStoppedError");
 });
 
-test("creator processing continues after one analysis failure and aggregates the item error", async () => {
+test("creator processing applies one model to all text sources, skips successes, and aggregates failures", async () => {
   let analysisCalls = 0;
+  const analysisModels: Array<string | undefined> = [];
   let savedViews = 0;
   let finished: { status: "success" | "error"; analyzedCount?: number; error?: string } | undefined;
   const creator = {
@@ -98,17 +100,18 @@ test("creator processing continues after one analysis failure and aggregates the
     createdAt: "2026-08-16T00:00:00.000Z",
     updatedAt: "2026-08-16T00:00:00.000Z"
   };
-  const collected = ["BV1", "BV2"].map((externalId) => ({
-    externalId,
-    contentType: "video" as const,
-    title: externalId,
+  const collected = [
+    { externalId: "BV1", contentType: "video" as const, transcript: "字幕", transcriptSource: "subtitle" as const, status: "ready" as const },
+    { externalId: "note-1", contentType: "note" as const, transcript: "正文", transcriptSource: "body" as const, status: "ready" as const },
+    { externalId: "BV2", contentType: "video" as const, transcript: "标题元数据", transcriptSource: "metadata" as const, status: "metadata_only" as const },
+    { externalId: "existing-success", contentType: "video" as const, transcript: "历史字幕", transcriptSource: "subtitle" as const, status: "ready" as const }
+  ].map((input) => ({
+    ...input,
+    title: input.externalId,
     description: "",
     tags: [],
-    sourceUrl: `https://www.bilibili.com/video/${externalId}`,
-    publishedAt: "2026-08-16T00:00:00.000Z",
-    transcript: "字幕",
-    transcriptSource: "subtitle" as const,
-    status: "ready" as const
+    sourceUrl: `https://example.com/${input.externalId}`,
+    publishedAt: "2026-08-16T00:00:00.000Z"
   }));
   const processor = createCollectionProcessor({
     getCreator: () => creator,
@@ -126,6 +129,7 @@ test("creator processing continues after one analysis failure and aggregates the
       localTime: "07:30",
       timezone: "Asia/Shanghai",
       maxVideosPerCreator: 5,
+      analysisModel: "deepseek-v4-flash",
       updatedAt: "2026-08-16T00:00:00.000Z"
     }),
     upsertContent: (input) => ({
@@ -134,14 +138,15 @@ test("creator processing continues after one analysis failure and aggregates the
         ...input,
         id: input.externalId,
         collectedAt: "2026-08-16T00:00:00.000Z",
-        analysisStatus: "pending",
+        analysisStatus: input.externalId === "existing-success" ? "success" : "pending",
         createdAt: "2026-08-16T00:00:00.000Z",
         updatedAt: "2026-08-16T00:00:00.000Z"
       }
     }),
     markAnalysis: () => undefined,
-    analyze: async () => {
+    analyze: async (_content, options) => {
       analysisCalls += 1;
+      analysisModels.push(options?.model);
       if (analysisCalls === 1) throw new Error("bad model output");
       return [];
     },
@@ -153,9 +158,10 @@ test("creator processing continues after one analysis failure and aggregates the
     }
   });
   await processor(run.items[0]!, { leaseOwner: "worker", signal: new AbortController().signal });
-  assert.equal(analysisCalls, 2);
-  assert.equal(savedViews, 1);
+  assert.equal(analysisCalls, 3);
+  assert.deepEqual(analysisModels, ["deepseek-v4-flash", "deepseek-v4-flash", "deepseek-v4-flash"]);
+  assert.equal(savedViews, 2);
   assert.equal(finished?.status, "error");
-  assert.equal(finished?.analyzedCount, 1);
+  assert.equal(finished?.analyzedCount, 2);
   assert.match(finished?.error || "", /1 条内容分析失败/);
 });

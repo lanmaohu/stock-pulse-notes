@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseBrowserCredential } from "./platforms/browser.js";
-import { parseDouyinAwemes, parseDouyinUsers } from "./platforms/douyin.js";
+import { parseDouyinAwemes, parseDouyinUsers, trustedDouyinAccountProfileId } from "./platforms/douyin.js";
 import { parseTwitterPosts, parseTwitterUsers } from "./platforms/twitter.js";
-import { parseXiaohongshuNotes, parseXiaohongshuUsers } from "./platforms/xiaohongshu.js";
+import {
+  parseXiaohongshuNotes,
+  parseXiaohongshuUsers,
+  trustedXiaohongshuAccountProfileId
+} from "./platforms/xiaohongshu.js";
 import { closeTwitterOAuthSessions, createTwitterOAuthSession, parseTwitterCredential } from "./twitter-auth.js";
 
 test("Douyin response fixtures produce stable creators and deduplicated works", () => {
@@ -73,16 +77,52 @@ test("Xiaohongshu response fixtures preserve creator and xsec note identity", ()
   assert.equal(notes[0]?.raw.desc, "正文内容");
 });
 
+test("account identity ignores arbitrary creator links outside trusted account controls", () => {
+  const douyinId = "MS4wLjABAAAA-current-account-1234567890";
+  assert.equal(trustedDouyinAccountProfileId([
+    { href: "https://www.douyin.com/user/MS4wLjABAAAA-random-creator-1234567890", isAccountControl: false }
+  ]), "");
+  assert.equal(trustedDouyinAccountProfileId([
+    { href: `https://www.douyin.com/user/${douyinId}`, isAccountControl: true }
+  ]), douyinId);
+
+  const xhsId = "66abcdeffedcba0011223344";
+  assert.equal(trustedXiaohongshuAccountProfileId([
+    { href: "https://www.xiaohongshu.com/user/profile/66ffffffffffffffffffffff", text: "推荐作者", inNavigation: false }
+  ]), "");
+  assert.equal(trustedXiaohongshuAccountProfileId([
+    { href: `https://www.xiaohongshu.com/user/profile/${xhsId}`, text: "我", inNavigation: true }
+  ]), xhsId);
+});
+
 test("browser credentials are platform-bound and reject malformed plaintext", () => {
   const credential = JSON.stringify({
     version: 1,
     platform: "douyin",
     userAgent: "test-agent",
-    storageState: { cookies: [], origins: [] }
+    storageState: {
+      cookies: [{
+        name: "sessionid",
+        value: "private-session",
+        domain: ".douyin.com",
+        path: "/",
+        expires: -1,
+        httpOnly: true,
+        secure: true,
+        sameSite: "Lax"
+      }],
+      origins: [{ origin: "https://www.douyin.com", localStorage: [{ name: "theme", value: "light" }] }]
+    }
   });
   assert.equal(parseBrowserCredential("douyin", credential).userAgent, "test-agent");
   assert.throws(() => parseBrowserCredential("xiaohongshu", credential), /凭证格式无效/);
   assert.throws(() => parseBrowserCredential("douyin", "Cookie=plaintext"), /凭证已损坏/);
+  assert.throws(() => parseBrowserCredential("douyin", JSON.stringify({
+    version: 1,
+    platform: "douyin",
+    userAgent: "test-agent",
+    storageState: { cookies: [{ name: "sessionid", value: "missing-cookie-fields" }], origins: [] }
+  })), /凭证格式无效/);
 });
 
 test("Twitter response fixtures preserve account, full post body, tags and media identity", () => {

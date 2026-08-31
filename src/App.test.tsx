@@ -25,6 +25,11 @@ function insightFixture(id: string, title: string, contentType: "video" | "note"
       collectedAt: "2026-08-16T09:00:00.000Z",
       transcript: contentType === "video" ? `${title}的完整字幕文字稿。` : "",
       transcriptSource: contentType === "video" ? "subtitle" : "metadata",
+      summarySections: contentType === "video" ? [{
+        heading: "核心脉络",
+        body: `${title}围绕核心观点展开说明。`,
+        sourceQuotes: [`${title}的完整字幕文字稿。`]
+      }] : [],
       status: "ready",
       analysisStatus: "success",
       createdAt: "2026-08-16T09:00:00.000Z",
@@ -86,6 +91,7 @@ describe("application routes", () => {
     expect(screen.getByRole("link", { name: "测试视频" })).toBeInTheDocument();
     expect(screen.queryByText("B 站字幕文字稿")).not.toBeInTheDocument();
     expect(screen.queryByText("测试视频的核心观点")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "内容摘要" })).not.toBeInTheDocument();
     expect(screen.queryByText("测试视频的依据")).not.toBeInTheDocument();
     expect(screen.queryByText("测试视频的风险")).not.toBeInTheDocument();
 
@@ -93,11 +99,27 @@ describe("application routes", () => {
     const collapseButton = await screen.findByRole("button", { name: "收起观点：测试视频" });
     expect(collapseButton).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByText("测试视频的核心观点")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "内容摘要" })).toBeInTheDocument();
+    expect(screen.getByText("测试视频围绕核心观点展开说明。")).toBeInTheDocument();
+
+    const summaryEvidence = screen.getByText("查看原文依据");
+    expect(summaryEvidence.closest("details")).not.toHaveAttribute("open");
+    summaryEvidence.click();
+    expect(summaryEvidence.closest("details")).toHaveAttribute("open");
+    expect(await screen.findByText("测试视频的完整字幕文字稿。")).toBeInTheDocument();
+
+    const transcriptPanel = screen.getByText("B 站字幕文字稿").closest(".transcript-panel");
+    const summaryPanel = screen.getByRole("heading", { name: "内容摘要" }).closest(".transcript-summary");
+    const viewList = screen.getByText("测试视频的核心观点").closest(".view-list");
+    expect(transcriptPanel).not.toBeNull();
+    expect(summaryPanel).not.toBeNull();
+    expect(viewList).not.toBeNull();
+    expect(transcriptPanel!.compareDocumentPosition(summaryPanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summaryPanel!.compareDocumentPosition(viewList!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     const transcriptToggle = screen.getByText("B 站字幕文字稿");
-    expect(screen.queryByText("测试视频的完整字幕文字稿。")).not.toBeInTheDocument();
     transcriptToggle.click();
-    expect(await screen.findByText("测试视频的完整字幕文字稿。")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("测试视频的完整字幕文字稿。")).toHaveLength(2));
 
     collapseButton.click();
     expect(await screen.findByRole("button", { name: "展开观点：测试视频" })).toHaveAttribute("aria-expanded", "false");

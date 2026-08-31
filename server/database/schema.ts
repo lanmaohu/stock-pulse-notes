@@ -18,7 +18,7 @@ const requiredTables = [
 ] as const;
 
 const requiredColumns: Record<string, string[]> = {
-  content_items: ["platform", "externalId", "transcript", "transcriptSource", "analysisStatus"],
+  content_items: ["platform", "externalId", "transcript", "transcriptSource", "summarySections", "analysisStatus"],
   content_stock_views: ["contentId", "model", "confidence", "sourceSnippet"],
   collection_runs: ["status", "leaseOwner", "leaseExpiresAt"],
   collection_run_items: ["runId", "status", "errorCode"],

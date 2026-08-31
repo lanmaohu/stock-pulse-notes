@@ -7,10 +7,11 @@ import { databasePath } from "../config.js";
 import { schemaProblems } from "./schema.js";
 import { createVerifiedBackup, databaseSourceHash, verifyBackup, type BackupVerification } from "../operations/backup.js";
 
-export const latestSchemaMigration = "2026-08-analysis-model-v1";
+export const latestSchemaMigration = "2026-08-content-summary-v1";
 export const legacyRemovalMigration = "2026-08-remove-legacy-v1";
 const baseSchemaMigration = "2026-08-stability-v1";
 const operationsSchemaMigration = "2026-08-ops-v1";
+const analysisModelMigration = "2026-08-analysis-model-v1";
 const legacyMediaMigration = "2026-07-media-monitor-v1";
 const legacyTables = [
   "notes",
@@ -93,6 +94,7 @@ function applyBaseSchema(connection: DatabaseSync) {
       collectedAt TEXT NOT NULL,
       transcript TEXT NOT NULL,
       transcriptSource TEXT NOT NULL,
+      summarySections TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL,
       analysisStatus TEXT NOT NULL DEFAULT 'pending',
       error TEXT,
@@ -302,6 +304,13 @@ function applyAnalysisModelSchema(connection: DatabaseSync) {
   }
 }
 
+function applyContentSummarySchema(connection: DatabaseSync) {
+  const columns = connection.prepare("PRAGMA table_info(content_items)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "summarySections")) {
+    connection.exec("ALTER TABLE content_items ADD COLUMN summarySections TEXT NOT NULL DEFAULT '[]'");
+  }
+}
+
 type LegacyCreatorRow = { mid: string; name: string; lastCollectedAt: string | null; createdAt: string; updatedAt: string };
 type LegacyVideoRow = {
   id: string; bvid: string; creatorMid: string; creatorName: string; title: string; description: string; tags: string;
@@ -464,7 +473,8 @@ export async function ensureDatabase() {
   connection.exec("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, appliedAt TEXT NOT NULL)");
   runMigration(connection, baseSchemaMigration, applyBaseSchema);
   runMigration(connection, operationsSchemaMigration, applyOperationsSchema);
-  runMigration(connection, latestSchemaMigration, applyAnalysisModelSchema);
+  runMigration(connection, analysisModelMigration, applyAnalysisModelSchema);
+  runMigration(connection, latestSchemaMigration, applyContentSummarySchema);
   if (!applied(connection, legacyRemovalMigration)) {
     await verifiedLegacyBackup(connection);
     runMigration(connection, legacyRemovalMigration, applyLegacyRemoval);
@@ -475,7 +485,13 @@ export async function ensureDatabase() {
 
 export async function verifyDatabaseSchema() {
   await fsp.mkdir(databaseDirectory, { recursive: true });
-  const problems = schemaProblems(database(), operationsSchemaMigration, latestSchemaMigration, legacyRemovalMigration);
+  const problems = schemaProblems(
+    database(),
+    operationsSchemaMigration,
+    analysisModelMigration,
+    latestSchemaMigration,
+    legacyRemovalMigration
+  );
   if (problems.length) throw new Error(`Database schema is not current (${problems.join(", ")}). Run npm run migrate first.`);
   schemaReady = true;
 }

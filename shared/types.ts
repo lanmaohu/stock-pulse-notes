@@ -62,6 +62,12 @@ export interface CreatorCandidate {
 export type ContentStatus = "ready" | "metadata_only" | "error";
 export type AnalysisStatus = "pending" | "running" | "success" | "error";
 
+export interface ContentSummarySection {
+  heading: string;
+  body: string;
+  sourceQuotes: string[];
+}
+
 export interface ContentItem {
   id: string;
   platform: Platform;
@@ -79,6 +85,7 @@ export interface ContentItem {
   collectedAt: string;
   transcript: string;
   transcriptSource: "subtitle" | "body" | "metadata";
+  summarySections: ContentSummarySection[];
   status: ContentStatus;
   analysisStatus: AnalysisStatus;
   error?: string;

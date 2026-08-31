@@ -4,6 +4,7 @@ import type {
   ContentInsightsPageSize,
   ContentInsightsResponse,
   ContentItem,
+  ContentSummarySection,
   ContentStockView,
   Platform
 } from "../../shared/types.js";
@@ -41,8 +42,14 @@ export interface ContentStockViewInput {
   model: string;
 }
 
-type ContentItemRow = Omit<ContentItem, "tags" | "coverUrl" | "error"> & {
+export interface ContentAnalysisResult {
+  summarySections: ContentSummarySection[];
+  views: ContentStockViewInput[];
+}
+
+type ContentItemRow = Omit<ContentItem, "tags" | "summarySections" | "coverUrl" | "error"> & {
   tags: string;
+  summarySections: string;
   coverUrl: string | null;
   error: string | null;
 };
@@ -58,9 +65,32 @@ function toContent(row: ContentItemRow): ContentItem {
   return {
     ...row,
     tags: jsonStringArray(row.tags),
+    summarySections: summarySectionList(row.summarySections),
     coverUrl: optionalString(row.coverUrl),
     error: optionalString(row.error)
   };
+}
+
+function summarySectionList(value: string): ContentSummarySection[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((candidate) => {
+      if (!candidate || typeof candidate !== "object") return [];
+      const section = candidate as Record<string, unknown>;
+      if (typeof section.heading !== "string" || typeof section.body !== "string" || !Array.isArray(section.sourceQuotes)) return [];
+      const heading = section.heading.trim();
+      const body = section.body.trim();
+      const sourceQuotes = section.sourceQuotes
+        .filter((quote): quote is string => typeof quote === "string")
+        .map((quote) => quote.trim())
+        .filter(Boolean)
+        .slice(0, 2);
+      return heading && body && sourceQuotes.length ? [{ heading, body, sourceQuotes }] : [];
+    }).slice(0, 5);
+  } catch {
+    return [];
+  }
 }
 
 function toView(row: ContentStockViewRow): ContentStockView {
@@ -99,12 +129,13 @@ export function upsertContent(input: ContentInput): { content: ContentItem; isNe
   const analysisStatus = upgradedTranscript || existing?.analysisStatus === "error"
     ? "pending"
     : existing?.analysisStatus || "pending";
+  const summarySections = upgradedTranscript ? "[]" : existing?.summarySections || "[]";
   connection.prepare(`
     INSERT INTO content_items (
       id, platform, externalId, creatorId, creatorExternalId, creatorName, contentType, title, description,
       tags, sourceUrl, coverUrl, publishedAt, collectedAt, transcript, transcriptSource, status,
-      analysisStatus, error, createdAt, updatedAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      summarySections, analysisStatus, error, createdAt, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(platform, externalId) DO UPDATE SET
       creatorId = excluded.creatorId,
       creatorExternalId = excluded.creatorExternalId,
@@ -118,6 +149,7 @@ export function upsertContent(input: ContentInput): { content: ContentItem; isNe
       transcript = excluded.transcript,
       transcriptSource = excluded.transcriptSource,
       status = excluded.status,
+      summarySections = excluded.summarySections,
       analysisStatus = excluded.analysisStatus,
       error = excluded.error,
       updatedAt = excluded.updatedAt
@@ -139,6 +171,7 @@ export function upsertContent(input: ContentInput): { content: ContentItem; isNe
     transcript.slice(0, 120_000),
     transcriptSource,
     status,
+    summarySections,
     analysisStatus,
     contentError || null,
     existing?.createdAt || now,
@@ -168,7 +201,7 @@ export function resetContentAnalysis(id: string) {
   return Number(result.changes) === 1;
 }
 
-export function saveContentStockViews(content: ContentItem, views: ContentStockViewInput[]) {
+export function saveContentAnalysis(content: ContentItem, analysis: ContentAnalysisResult) {
   const now = new Date().toISOString();
   withTransaction((connection) => {
     connection.prepare("DELETE FROM content_stock_views WHERE contentId = ?").run(content.id);
@@ -178,7 +211,7 @@ export function saveContentStockViews(content: ContentItem, views: ContentStockV
         collectedAt, symbols, companies, stance, coreView, evidence, risks, confidence, sourceSnippet, model, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    for (const view of views.slice(0, 12)) {
+    for (const view of analysis.views.slice(0, 12)) {
       insert.run(
         crypto.randomUUID(), content.id, content.platform, content.creatorId, content.creatorExternalId,
         content.creatorName, content.title, content.sourceUrl, content.publishedAt, content.collectedAt,
@@ -187,8 +220,16 @@ export function saveContentStockViews(content: ContentItem, views: ContentStockV
         view.confidence, view.sourceSnippet.slice(0, 1_000), view.model, now
       );
     }
-    connection.prepare("UPDATE content_items SET analysisStatus = 'success', error = NULL, updatedAt = ? WHERE id = ?")
-      .run(now, content.id);
+    const summarySections = analysis.summarySections.slice(0, 5).map((section) => ({
+      heading: section.heading.slice(0, 80),
+      body: section.body.slice(0, 1_200),
+      sourceQuotes: section.sourceQuotes.slice(0, 2).map((quote) => quote.slice(0, 500))
+    }));
+    connection.prepare(`
+      UPDATE content_items
+      SET summarySections = ?, analysisStatus = 'success', error = NULL, updatedAt = ?
+      WHERE id = ?
+    `).run(JSON.stringify(summarySections), now, content.id);
   });
 }
 

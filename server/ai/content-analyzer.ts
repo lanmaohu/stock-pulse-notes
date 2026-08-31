@@ -1,10 +1,11 @@
-import type { ContentItem, ContentStockView, DeepSeekModel } from "../../shared/types.js";
-import type { ContentStockViewInput } from "../repositories/content.js";
+import type { ContentItem, ContentStockView, ContentSummarySection, DeepSeekModel } from "../../shared/types.js";
+import type { ContentAnalysisResult, ContentStockViewInput } from "../repositories/content.js";
 import { createDeepSeekClient } from "./deepseek-client.js";
-import { AiError, type AiClient, type AiMessage, type AiUsage } from "./types.js";
+import { AiError, type AiClient, type AiMessage } from "./types.js";
 import { log as writeLog, type LogLevel } from "../observability/logger.js";
 
 interface ContentAiPayload {
+  summarySections: unknown[];
   views: unknown[];
 }
 
@@ -22,7 +23,11 @@ const limits = {
   list: 8,
   listItem: 500,
   coreView: 2_000,
-  sourceSnippet: 1_000
+  sourceSnippet: 1_000,
+  summarySections: 5,
+  summaryHeading: 80,
+  summaryBody: 1_200,
+  summaryQuote: 500
 } as const;
 
 function stringValue(value: unknown, limit: number) {
@@ -70,17 +75,30 @@ function parsePayload(content: string): ContentAiPayload {
       throw new AiError("invalid_response", "AI response contained malformed JSON.");
     }
   }
-  if (!parsed || typeof parsed !== "object" || !("views" in parsed) || !Array.isArray(parsed.views)) {
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !("summarySections" in parsed) ||
+    !Array.isArray(parsed.summarySections) ||
+    !("views" in parsed) ||
+    !Array.isArray(parsed.views)
+  ) {
     throw new AiError("invalid_response", "AI response did not match the expected schema.");
   }
-  return { views: parsed.views.slice(0, limits.views) };
+  return {
+    summarySections: parsed.summarySections.slice(0, limits.summarySections),
+    views: parsed.views.slice(0, limits.views)
+  };
 }
 
 function promptFor(content: ContentItem): AiMessage[] {
+  const summaryInstruction = content.transcriptSource === "subtitle"
+    ? `同时把字幕按原有叙述顺序总结为 3 至 5 个章节；字幕很短或信息不足时可以少于 3 个，但至少返回 1 个。每个章节必须包含简短小标题、一个自然段和 1 至 2 条能直接支持该段内容的字幕原句。sourceQuotes 必须逐字复制字幕中的连续原文，不得改写、拼接、使用省略号或补充字幕没有表达的信息。`
+    : "本内容不是真实视频字幕，summarySections 必须返回空数组。";
   return [
     {
       role: "system",
-      content: "你是一个严谨的投资内容观点提取助手。只基于用户提供的标题、简介、正文、字幕或元数据提取投资相关观点。标的可以是股票代码、上市公司、行业板块或产业主题。不要给买入/卖出/仓位指令，不要补充材料之外的事实。必须返回 JSON。"
+      content: "你是一个严谨的内容总结与投资观点提取助手。只能使用用户提供的标题、简介、正文、字幕或元数据，不得引入外部知识、背景事实、推测、建议或材料之外的因果关系。标的可以是股票代码、上市公司、行业板块或产业主题。不要给买入、卖出或仓位指令。必须返回严格 JSON。"
     },
     {
       role: "user",
@@ -95,8 +113,13 @@ ${content.description.slice(0, limits.description) || "无"}
 正文、字幕或元数据:
 ${content.transcript.slice(0, limits.transcript)}
 
-请提取内容里的核心标的观点。没有明确股票代码时，也要提取明确出现的上市公司、行业板块或产业主题；只有完全没有投资相关内容时才返回空 views。严格 JSON:
+${summaryInstruction}
+
+同时提取内容里的核心标的观点。没有明确股票代码时，也要提取明确出现的上市公司、行业板块或产业主题；只有完全没有投资相关内容时才返回空 views。只返回以下结构的严格 JSON:
 {
+  "summarySections": [{
+    "heading": string, "body": string, "sourceQuotes": string[]
+  }],
   "views": [{
     "symbols": string[], "companies": string[],
     "stance": "bullish" | "bearish" | "neutral" | "mixed" | "watch",
@@ -108,20 +131,34 @@ ${content.transcript.slice(0, limits.transcript)}
   ];
 }
 
-function repairPrompt(content: string): AiMessage[] {
-  return [
-    {
-      role: "system",
-      content: "修复下面的模型输出，使其成为符合指定结构的严格 JSON。不要新增原输出中没有的事实，只返回 JSON 对象。"
-    },
-    {
-      role: "user",
-      content: `目标结构: {"views":[{"symbols":string[],"companies":string[],"stance":"bullish|bearish|neutral|mixed|watch","coreView":string,"evidence":string[],"risks":string[],"confidence":"high|medium|low","sourceSnippet":string}]}
+function normalizedQuoteText(value: string) {
+  return value.replace(/\s+/gu, "").trim();
+}
 
-待修复输出:
-${content.slice(0, 24_000)}`
+function normalizeSummarySections(payload: ContentAiPayload, content: ContentItem): ContentSummarySection[] {
+  if (content.transcriptSource !== "subtitle") return [];
+  const transcript = normalizedQuoteText(content.transcript.slice(0, limits.transcript));
+  const sections = payload.summarySections.map((candidate) => {
+    if (!candidate || typeof candidate !== "object") {
+      throw new AiError("invalid_response", "AI response contained an invalid summary section.");
     }
-  ];
+    const section = candidate as Record<string, unknown>;
+    const heading = stringValue(section.heading, limits.summaryHeading);
+    const body = stringValue(section.body, limits.summaryBody);
+    if (!heading || !body || !Array.isArray(section.sourceQuotes)) {
+      throw new AiError("invalid_response", "AI response contained an incomplete summary section.");
+    }
+    const sourceQuotes = section.sourceQuotes
+      .map((quote) => stringValue(quote, limits.summaryQuote))
+      .filter(Boolean)
+      .slice(0, 2);
+    if (!sourceQuotes.length || sourceQuotes.some((quote) => !transcript.includes(normalizedQuoteText(quote)))) {
+      throw new AiError("invalid_response", "AI summary evidence did not match the transcript.");
+    }
+    return { heading, body, sourceQuotes };
+  });
+  if (!sections.length) throw new AiError("invalid_response", "AI response did not contain a transcript summary.");
+  return sections;
 }
 
 function normalizeViews(payload: ContentAiPayload, content: ContentItem, model: string): ContentStockViewInput[] {
@@ -146,13 +183,6 @@ function normalizeViews(payload: ContentAiPayload, content: ContentItem, model: 
   });
 }
 
-function mergeUsage(left: AiUsage, right: AiUsage): AiUsage {
-  return {
-    promptTokens: (left.promptTokens || 0) + (right.promptTokens || 0) || undefined,
-    completionTokens: (left.completionTokens || 0) + (right.completionTokens || 0) || undefined
-  };
-}
-
 function logEntry(log: ContentAnalysisOptions["log"], entry: Record<string, unknown>) {
   if (log) {
     log(entry);
@@ -162,33 +192,24 @@ function logEntry(log: ContentAnalysisOptions["log"], entry: Record<string, unkn
   writeLog((level as LogLevel) || "info", typeof event === "string" ? event : "content_analysis", fields);
 }
 
-export async function analyzeContentStockViews(
+export async function analyzeContent(
   content: ContentItem,
   options: ContentAnalysisOptions = {}
-): Promise<ContentStockViewInput[]> {
-  if (!content.transcript.trim()) return [];
+): Promise<ContentAnalysisResult> {
+  if (!content.transcript.trim()) return { summarySections: [], views: [] };
   const client = options.client || createDeepSeekClient(options.model);
   const startedAt = performance.now();
-  let usage: AiUsage = {};
-  let repaired = false;
+  let promptTokens: number | undefined;
+  let completionTokens: number | undefined;
   try {
-    const completion = await client.completeJson(promptFor(content), { signal: options.signal, transportRetries: 1 });
-    usage = completion.usage;
-    let views: ContentStockViewInput[];
-    try {
-      views = normalizeViews(parsePayload(completion.content), content, client.model);
-    } catch (error) {
-      if (!(error instanceof AiError && error.code === "invalid_response")) throw error;
-      repaired = true;
-      const repair = await client.completeJson(repairPrompt(completion.content), {
-        signal: options.signal,
-        transportRetries: 0
-      });
-      usage = mergeUsage(usage, repair.usage);
-      views = normalizeViews(parsePayload(repair.content), content, client.model);
-    }
+    const completion = await client.completeJson(promptFor(content), { signal: options.signal, transportRetries: 0 });
+    promptTokens = completion.usage.promptTokens;
+    completionTokens = completion.usage.completionTokens;
+    const payload = parsePayload(completion.content);
+    const summarySections = normalizeSummarySections(payload, content);
+    const views = normalizeViews(payload, content, client.model);
 
-    const result = views.length || content.transcriptSource !== "metadata"
+    const normalizedViews = views.length || content.transcriptSource !== "metadata"
       ? views
       : [{
           symbols: [],
@@ -201,6 +222,7 @@ export async function analyzeContentStockViews(
           sourceSnippet: [content.title, content.description, content.tags.join(" ")].join("\n").trim().slice(0, 300),
           model: client.model
         }];
+    const result = { summarySections, views: normalizedViews };
     logEntry(options.log, {
       level: "info",
       event: "content_analysis_completed",
@@ -208,10 +230,10 @@ export async function analyzeContentStockViews(
       model: client.model,
       transcriptSource: content.transcriptSource,
       durationMs: Math.round(performance.now() - startedAt),
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
-      viewCount: result.length,
-      repaired
+      promptTokens,
+      completionTokens,
+      summarySectionCount: result.summarySections.length,
+      viewCount: result.views.length
     });
     return result;
   } catch (error) {
@@ -225,8 +247,8 @@ export async function analyzeContentStockViews(
       model: client.model,
       transcriptSource: content.transcriptSource,
       durationMs: Math.round(performance.now() - startedAt),
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
+      promptTokens,
+      completionTokens,
       code: aiError.code
     });
     throw aiError;

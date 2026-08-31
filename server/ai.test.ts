@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { deepSeekModels, type ContentItem, type DeepSeekModel } from "../shared/types.js";
-import { analyzeContentStockViews } from "./ai/content-analyzer.js";
+import { analyzeContent } from "./ai/content-analyzer.js";
 import { createDeepSeekClient } from "./ai/deepseek-client.js";
 import { AiError, type AiClient, type AiCompletionOptions, type AiMessage } from "./ai/types.js";
 
@@ -33,6 +33,7 @@ function content(overrides: Partial<ContentItem> = {}): ContentItem {
     collectedAt: "2026-08-16T01:00:00.000Z",
     transcript: "字幕内容",
     transcriptSource: "subtitle",
+    summarySections: [],
     status: "ready",
     analysisStatus: "pending",
     createdAt: "2026-08-16T01:00:00.000Z",
@@ -64,7 +65,7 @@ test("DeepSeek client uses either supported model with the same structured reque
       retries = policy?.retries;
       return new Response(JSON.stringify({
         model: "unexpected-upstream-alias",
-        choices: [{ message: { content: "{\"views\":[]}" } }],
+        choices: [{ message: { content: "{\"summarySections\":[],\"views\":[]}" } }],
         usage: { prompt_tokens: 7, completion_tokens: 3 }
       }), { status: 200 });
     });
@@ -94,58 +95,73 @@ test("unsupported explicit models fail while legacy AI_MODEL is ignored", () => 
 
 test("content analysis accepts fenced JSON and normalizes unsafe fields", async () => {
   const { client } = fakeClient([`\`\`\`json
-    {"views":[{"symbols":[" RKLB ",3],"companies":["Rocket Lab"],"stance":"invalid","coreView":" 看多 ","evidence":["依据"],"risks":[],"confidence":"high","sourceSnippet":"原话"}]}
+    {"summarySections":[],"views":[{"symbols":[" RKLB ",3],"companies":["Rocket Lab"],"stance":"invalid","coreView":" 看多 ","evidence":["依据"],"risks":[],"confidence":"high","sourceSnippet":"原话"}]}
   \`\`\``]);
-  const result = await analyzeContentStockViews(content({ transcriptSource: "metadata", status: "metadata_only" }), {
+  const result = await analyzeContent(content({ transcriptSource: "metadata", status: "metadata_only" }), {
     client,
     log: () => undefined
   });
-  assert.equal(result.length, 1);
-  assert.deepEqual(result[0]?.symbols, ["RKLB"]);
-  assert.equal(result[0]?.stance, "watch");
-  assert.equal(result[0]?.confidence, "medium");
-  assert.equal(result[0]?.model, "deepseek-v4-pro");
+  assert.equal(result.views.length, 1);
+  assert.deepEqual(result.summarySections, []);
+  assert.deepEqual(result.views[0]?.symbols, ["RKLB"]);
+  assert.equal(result.views[0]?.stance, "watch");
+  assert.equal(result.views[0]?.confidence, "medium");
+  assert.equal(result.views[0]?.model, "deepseek-v4-pro");
 });
 
 test("Xiaohongshu body text remains a full-confidence content source", async () => {
-  const { client, calls } = fakeClient(['{"views":[{"symbols":[],"companies":["测试公司"],"coreView":"正文观点","evidence":[],"risks":[],"confidence":"high"}]}']);
-  const result = await analyzeContentStockViews(content({
+  const { client, calls } = fakeClient(['{"summarySections":[],"views":[{"symbols":[],"companies":["测试公司"],"coreView":"正文观点","evidence":[],"risks":[],"confidence":"high"}]}']);
+  const result = await analyzeContent(content({
     platform: "xiaohongshu",
     contentType: "note",
     transcript: "小红书正文内容",
     transcriptSource: "body"
   }), { client, log: () => undefined });
-  assert.equal(result[0]?.confidence, "high");
+  assert.equal(result.views[0]?.confidence, "high");
+  assert.deepEqual(result.summarySections, []);
   assert.match(calls[0]?.messages[1]?.content || "", /正文、字幕或元数据/);
 });
 
-test("invalid model output gets one repair request without another transport retry", async () => {
+test("subtitle summary and views are produced by exactly one model request", async () => {
   const { client, calls } = fakeClient([
-    "not-json",
-    '{"views":[{"coreView":"修复后的观点","symbols":[],"companies":[],"evidence":[],"risks":[]}]}'
+    '{"summarySections":[{"heading":"核心内容","body":"视频介绍字幕内容。","sourceQuotes":["字幕内容"]}],"views":[{"coreView":"字幕观点","symbols":[],"companies":[],"evidence":[],"risks":[]}]}'
   ]);
-  const result = await analyzeContentStockViews(content(), { client, log: () => undefined });
-  assert.equal(result[0]?.coreView, "修复后的观点");
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0]?.options?.transportRetries, 1);
-  assert.equal(calls[1]?.options?.transportRetries, 0);
+  const result = await analyzeContent(content(), { client, log: () => undefined });
+  assert.equal(result.summarySections[0]?.heading, "核心内容");
+  assert.deepEqual(result.summarySections[0]?.sourceQuotes, ["字幕内容"]);
+  assert.equal(result.views[0]?.coreView, "字幕观点");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.options?.transportRetries, 0);
 });
 
-test("a second invalid response fails with a stable error code", async () => {
-  const { client } = fakeClient(["bad", "still bad"]);
+test("invalid model output fails without a repair request", async () => {
+  const { client, calls } = fakeClient(["bad", "unused"]);
   await assert.rejects(
-    () => analyzeContentStockViews(content(), { client, log: () => undefined }),
+    () => analyzeContent(content(), { client, log: () => undefined }),
     (error) => error instanceof AiError && error.code === "invalid_response"
   );
+  assert.equal(calls.length, 1);
+});
+
+test("summary evidence outside the transcript fails without another model request", async () => {
+  const { client, calls } = fakeClient([
+    '{"summarySections":[{"heading":"虚构内容","body":"字幕没有表达的内容。","sourceQuotes":["不存在的原文"]}],"views":[]}'
+  ]);
+  await assert.rejects(
+    () => analyzeContent(content(), { client, log: () => undefined }),
+    (error) => error instanceof AiError && error.code === "invalid_response"
+  );
+  assert.equal(calls.length, 1);
 });
 
 test("analysis logs metadata only and never logs transcript content", async () => {
   const secretTranscript = "PRIVATE_TRANSCRIPT_SHOULD_NOT_BE_LOGGED";
-  const { client } = fakeClient(['{"views":[]}']);
+  const { client } = fakeClient(['{"summarySections":[{"heading":"摘要","body":"字幕内容摘要。","sourceQuotes":["PRIVATE_TRANSCRIPT_SHOULD_NOT_BE_LOGGED"]}],"views":[]}']);
   const logs: Record<string, unknown>[] = [];
-  await analyzeContentStockViews(content({ transcript: secretTranscript }), { client, log: (entry) => logs.push(entry) });
+  await analyzeContent(content({ transcript: secretTranscript }), { client, log: (entry) => logs.push(entry) });
   assert.equal(logs.length, 1);
   assert.equal(logs[0]?.event, "content_analysis_completed");
+  assert.equal(logs[0]?.summarySectionCount, 1);
   assert.equal(JSON.stringify(logs).includes(secretTranscript), false);
 });
 

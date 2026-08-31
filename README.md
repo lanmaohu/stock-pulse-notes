@@ -32,7 +32,7 @@ Browser -> Nginx -> Express API -> SQLite
 - API 与 Worker 各自只维护一个 SQLite 连接，统一启用 WAL、外键和 5 秒写锁等待。
 - 数据库迁移必须显式执行；API 和 Worker 启动时只校验当前迁移版本。
 - 请求日志使用 JSON 和请求 ID，不记录 Cookie、密码、平台凭据、字幕或 AI 密钥。
-- B 站、二维码和 DeepSeek 请求均有超时；网络、限流和服务端错误最多重试一次，认证与业务错误不盲目重试。
+- B 站和二维码请求均有超时并对瞬时错误最多重试一次；DeepSeek 每次内容分析只发送一个请求，失败后由后续采集重新尝试。
 
 ## 本地开发
 
@@ -83,6 +83,8 @@ TWITTER_OAUTH_CALLBACK_URL=https://stockpulse.com.cn/api/platform-oauth/twitter/
 - 登录失败次数保存在 SQLite；同一 IP 15 分钟最多失败 5 次。
 - `PLATFORM_CREDENTIALS_KEY` 必须是 32 字节 Base64 或 64 位十六进制字符串。
 - DeepSeek 模型在管理后台“采集设置”中选择，支持 `deepseek-v4-flash` 和 `deepseek-v4-pro`；默认使用 Pro。切换只影响尚未开始或未成功的后续分析，不会重跑已经成功的历史内容。
+- 真实视频字幕的分段摘要与投资观点由同一次 DeepSeek 请求生成。每段摘要附带经服务端校验的字幕原句，可在页面折叠查看；正文和仅元数据内容不生成摘要。
+- 摘要功能只作用于新内容和后续重试内容，部署时不会批量补跑已经分析成功的历史视频。
 - `DEEPSEEK_API_KEY` 供两个模型共用；旧部署中残留的 `AI_MODEL` 会被忽略。
 - 每日备份默认在 Asia/Shanghai 03:15 执行，保留 30 天且至少保留最近 7 份。
 - `BILIBILI_COLLECT_CRON_TIME` 只用于首次初始化，之后由管理后台设置。

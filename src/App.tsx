@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  BookOpen,
   CalendarDays,
   ChevronDown,
   ChevronLeft,
@@ -130,6 +131,41 @@ function TranscriptPanel({ content }: { content: ContentInsight["content"] }) {
   );
 }
 
+function ContentSummaryPanel({ content }: { content: ContentInsight["content"] }) {
+  if (!content.summarySections.length) return null;
+  const headingId = `content-summary-${content.id}`;
+  return (
+    <section className="transcript-summary" aria-labelledby={headingId}>
+      <div className="transcript-summary-heading">
+        <span><BookOpen size={18} /></span>
+        <div>
+          <h2 id={headingId}>内容摘要</h2>
+          <p>严格依据字幕整理 · 按内容顺序分段</p>
+        </div>
+      </div>
+      <div className="summary-section-list">
+        {content.summarySections.map((section, index) => (
+          <article className="summary-section" key={`${section.heading}-${index}`}>
+            <span className="summary-section-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+            <div className="summary-section-copy">
+              <h3>{section.heading}</h3>
+              <p>{section.body}</p>
+              <details className="summary-evidence">
+                <summary>查看原文依据</summary>
+                <div>
+                  {section.sourceQuotes.map((quote, quoteIndex) => (
+                    <blockquote key={`${quote}-${quoteIndex}`}>{quote}</blockquote>
+                  ))}
+                </div>
+              </details>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function InsightCard({ insight }: { insight: ContentInsight }) {
   const { content, views } = insight;
   const [expanded, setExpanded] = useState(false);
@@ -185,6 +221,7 @@ function InsightCard({ insight }: { insight: ContentInsight }) {
       {expanded ? (
         <div className="insight-details" id={detailsId}>
           <TranscriptPanel content={content} />
+          <ContentSummaryPanel content={content} />
 
           {views.length ? (
             <div className="view-list">

@@ -88,7 +88,7 @@ test("worker stop reason is explicit and non-retryable by the processor", () => 
 test("creator processing applies one model to all text sources, skips successes, and aggregates failures", async () => {
   let analysisCalls = 0;
   const analysisModels: Array<string | undefined> = [];
-  let savedViews = 0;
+  const savedSummaryCounts: number[] = [];
   let finished: { status: "success" | "error"; analyzedCount?: number; error?: string } | undefined;
   const creator = {
     id: "creator-1",
@@ -138,6 +138,7 @@ test("creator processing applies one model to all text sources, skips successes,
         ...input,
         id: input.externalId,
         collectedAt: "2026-08-16T00:00:00.000Z",
+        summarySections: [],
         analysisStatus: input.externalId === "existing-success" ? "success" : "pending",
         createdAt: "2026-08-16T00:00:00.000Z",
         updatedAt: "2026-08-16T00:00:00.000Z"
@@ -147,10 +148,15 @@ test("creator processing applies one model to all text sources, skips successes,
     analyze: async (_content, options) => {
       analysisCalls += 1;
       analysisModels.push(options?.model);
-      if (analysisCalls === 1) throw new Error("bad model output");
-      return [];
+      if (_content.externalId === "BV2") throw new Error("bad model output");
+      return {
+        summarySections: _content.transcriptSource === "subtitle"
+          ? [{ heading: "字幕摘要", body: "字幕摘要正文", sourceQuotes: [_content.transcript] }]
+          : [],
+        views: []
+      };
     },
-    saveViews: () => { savedViews += 1; },
+    saveAnalysis: (_content, analysis) => { savedSummaryCounts.push(analysis.summarySections.length); },
     updateCreator: () => creator,
     finishItem: (_id, input) => {
       finished = input;
@@ -160,7 +166,7 @@ test("creator processing applies one model to all text sources, skips successes,
   await processor(run.items[0]!, { leaseOwner: "worker", signal: new AbortController().signal });
   assert.equal(analysisCalls, 3);
   assert.deepEqual(analysisModels, ["deepseek-v4-flash", "deepseek-v4-flash", "deepseek-v4-flash"]);
-  assert.equal(savedViews, 2);
+  assert.deepEqual(savedSummaryCounts, [1, 0]);
   assert.equal(finished?.status, "error");
   assert.equal(finished?.analyzedCount, 2);
   assert.match(finished?.error || "", /1 条内容分析失败/);

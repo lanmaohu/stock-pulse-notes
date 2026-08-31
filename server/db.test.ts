@@ -106,6 +106,8 @@ test("legacy Bilibili data migrates once into the generic model", async () => {
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE name = ?").get(db.latestSchemaMigration) as { count: number }).count, 1);
   const settingsColumns = read.prepare("PRAGMA table_info(collection_settings)").all() as Array<{ name: string }>;
   assert.equal(settingsColumns.some((column) => column.name === "analysisModel"), true);
+  const contentColumns = read.prepare("PRAGMA table_info(content_items)").all() as Array<{ name: string }>;
+  assert.equal(contentColumns.some((column) => column.name === "summarySections"), true);
   assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'index' AND name = 'idx_content_items_published'").get() as { count: number }).count, 1);
   for (const table of ["notes", "daily_summaries", "research_suggestions", "ai_runs", "video_stock_views", "bilibili_videos", "bilibili_creators"]) {
     assert.equal((read.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) as { count: number }).count, 0, table);
@@ -122,7 +124,41 @@ test("legacy Bilibili data migrates once into the generic model", async () => {
 
   const insights = db.listContentInsights();
   assert.equal(insights.insights[0]?.content.creatorName, "笨笨的韭菜");
+  assert.deepEqual(insights.insights[0]?.content.summarySections, []);
   assert.equal(insights.insights[0]?.views[0]?.coreView, "关注国产科技产业链");
+});
+
+test("content summaries persist with analysis and malformed stored JSON degrades safely", () => {
+  const content = db.getContentItem("legacy-video");
+  assert.ok(content);
+  db.saveContentAnalysis(content, {
+    summarySections: [{
+      heading: "国产科技",
+      body: "内容围绕国产科技产业链展开。",
+      sourceQuotes: ["字幕内容"]
+    }],
+    views: [{
+      symbols: [],
+      companies: ["国产科技"],
+      stance: "watch",
+      coreView: "关注国产科技产业链",
+      evidence: ["字幕内容"],
+      risks: [],
+      confidence: "medium",
+      sourceSnippet: "字幕内容",
+      model: "test-model"
+    }]
+  });
+  assert.deepEqual(db.getContentItem(content.id)?.summarySections, [{
+    heading: "国产科技",
+    body: "内容围绕国产科技产业链展开。",
+    sourceQuotes: ["字幕内容"]
+  }]);
+
+  const writer = new DatabaseSync(databasePath);
+  writer.prepare("UPDATE content_items SET summarySections = 'not-json' WHERE id = ?").run(content.id);
+  writer.close();
+  assert.deepEqual(db.getContentItem(content.id)?.summarySections, []);
 });
 
 test("collection settings default to Pro and constrain persisted analysis models", () => {
@@ -284,7 +320,7 @@ test("content insights mix content types and paginate by Shanghai publish time w
       transcriptSource: "metadata",
       status: "ready"
     });
-    db.saveContentStockViews(result.content, [{
+    db.saveContentAnalysis(result.content, { summarySections: [], views: [{
       symbols: ["TEST"],
       companies: [`公司${index}`],
       stance: "watch",
@@ -294,7 +330,7 @@ test("content insights mix content types and paginate by Shanghai publish time w
       confidence: "medium",
       sourceSnippet: "",
       model: "test-model"
-    }]);
+    }] });
     return result.content;
   });
   const writer = new DatabaseSync(databasePath);

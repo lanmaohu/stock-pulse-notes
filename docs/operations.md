@@ -229,13 +229,15 @@ Worker 正常退出会释放当前租约，未完成 item 回到 queued。不要
 
 - `configuration`：检查 `DEEPSEEK_API_KEY`，并确认“采集设置”中的模型为 `deepseek-v4-flash` 或 `deepseek-v4-pro`；
 - `authentication`：密钥无效，不会自动重试；
-- `rate_limited`：等待配额恢复后重新采集；
-- `timeout`、`upstream`：系统已有限重试，持续发生时查看 DeepSeek 状态；
-- `invalid_response`：同一模型修复仍失败，可重新采集单条内容。
+- `rate_limited`：等待配额恢复后由后续采集重新尝试；
+- `timeout`、`upstream`：为保证每次分析只调用一次模型，本次任务不会再次请求；持续发生时查看 DeepSeek 状态；
+- `invalid_response`：JSON、摘要结构或原文依据本地校验失败；系统不会调用模型修复，可由后续采集重新尝试。
 
-日志只包含 content ID、模型、耗时、token 和错误码，不应粘贴字幕或密钥排查。
+日志只包含 content ID、模型、耗时、token、摘要段落数、观点数和错误码，不应粘贴字幕或密钥排查。
 
 模型设置统一用于字幕、正文和仅元数据的观点提取。切换后只影响尚未开始或未成功的后续分析；已经成功的历史内容不会自动重跑。旧部署中残留的 `AI_MODEL` 环境变量会被忽略。
+
+视频字幕摘要与观点在同一次 DeepSeek 请求中生成，每次分析尝试最多请求一次。摘要只覆盖真实字幕，并逐段保存可核验的字幕原句；正文、元数据和历史成功内容不会生成或自动补齐摘要。
 
 ### B 站账号失效
 

@@ -1,5 +1,5 @@
 import type { CollectionRun, Platform } from "../../shared/types.js";
-import { analyzeContentStockViews } from "../ai.js";
+import { analyzeContent } from "../ai.js";
 import {
   finishCollectionRunItem,
   getCollectionSettings,
@@ -8,7 +8,7 @@ import {
 import {
   markContentAnalysisStatus,
   resetContentAnalysis,
-  saveContentStockViews,
+  saveContentAnalysis,
   upsertContent
 } from "../repositories/content.js";
 import {
@@ -30,13 +30,13 @@ export interface ProcessCreatorOptions {
 }
 
 export interface CollectionProcessorDependencies {
-  analyze: typeof analyzeContentStockViews;
+  analyze: typeof analyzeContent;
   finishItem: typeof finishCollectionRunItem;
   settings: typeof getCollectionSettings;
   startItem: typeof startCollectionRunItem;
   markAnalysis: typeof markContentAnalysisStatus;
   resetAnalysis: typeof resetContentAnalysis;
-  saveViews: typeof saveContentStockViews;
+  saveAnalysis: typeof saveContentAnalysis;
   upsertContent: typeof upsertContent;
   getCreator: typeof getCreator;
   getPlatformAccount: typeof getPlatformAccountWithCredential;
@@ -47,13 +47,13 @@ export interface CollectionProcessorDependencies {
 }
 
 const defaultDependencies: CollectionProcessorDependencies = {
-  analyze: analyzeContentStockViews,
+  analyze: analyzeContent,
   finishItem: finishCollectionRunItem,
   settings: getCollectionSettings,
   startItem: startCollectionRunItem,
   markAnalysis: markContentAnalysisStatus,
   resetAnalysis: resetContentAnalysis,
-  saveViews: saveContentStockViews,
+  saveAnalysis: saveContentAnalysis,
   upsertContent,
   getCreator,
   getPlatformAccount: getPlatformAccountWithCredential,
@@ -113,9 +113,9 @@ export function createCollectionProcessor(overrides: Partial<CollectionProcessor
         if (saved.content.analysisStatus !== "success") {
           dependencies.markAnalysis(saved.content.id, "running");
           try {
-            const views = await dependencies.analyze(saved.content, { signal, model: settings.analysisModel });
+            const analysis = await dependencies.analyze(saved.content, { signal, model: settings.analysisModel });
             assertActive(signal);
-            dependencies.saveViews(saved.content, views);
+            dependencies.saveAnalysis(saved.content, analysis);
             analyzedCount += 1;
           } catch (error) {
             if (isCollectionCancellation(error, signal)) {

@@ -18,7 +18,7 @@ process.env.PORTFOLIO_ADMIN_PASSWORD = "admin-test-password";
 
 const { app } = await import("./index.js");
 const { ensureDatabase } = await import("./database/migrations.js");
-const { saveContentStockViews, upsertContent } = await import("./repositories/content.js");
+const { saveContentAnalysis, upsertContent } = await import("./repositories/content.js");
 const { upsertCreator } = await import("./repositories/platform.js");
 const { writeServiceHeartbeat } = await import("./repositories/operations.js");
 const { createVerifiedBackup } = await import("./operations/backup.js");
@@ -51,7 +51,7 @@ before(async () => {
     transcriptSource: "metadata",
     status: "ready"
   }).content;
-  saveContentStockViews(content, [{
+  saveContentAnalysis(content, { summarySections: [], views: [{
     symbols: ["API"],
     companies: [],
     stance: "watch",
@@ -61,7 +61,7 @@ before(async () => {
     confidence: "medium",
     sourceSnippet: "",
     model: "test-model"
-  }]);
+  }] });
   const now = new Date().toISOString();
   writeServiceHeartbeat({ serviceName: "worker", instanceId: "http-test-worker", status: "ready", startedAt: now, heartbeatAt: now });
   await createVerifiedBackup({ reason: "http-test" });
@@ -93,8 +93,13 @@ test("public APIs stay available while management reads require an administrator
 
   const insights = await fetch(`${baseUrl}/api/content-insights`);
   assert.equal(insights.status, 200);
-  const insightsBody = await insights.json() as { insights: unknown[]; pagination: { page: number; pageSize: number }; summary: { contentCount: number } };
+  const insightsBody = await insights.json() as {
+    insights: Array<{ content: { summarySections: unknown[] } }>;
+    pagination: { page: number; pageSize: number };
+    summary: { contentCount: number };
+  };
   assert.equal(insightsBody.insights.length, 1);
+  assert.deepEqual(insightsBody.insights[0]?.content.summarySections, []);
   assert.deepEqual(insightsBody.pagination, { page: 1, pageSize: 10, totalItems: 1, totalPages: 1 });
   assert.equal(insightsBody.summary.contentCount, 1);
 

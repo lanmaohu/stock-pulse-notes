@@ -34,6 +34,16 @@ test("Xvfb uses a stable working directory across release cleanup", () => {
   assert.match(ecosystem, /name: "stockpulse-xvfb",\s+cwd: "\/opt\/stockpulse"/);
 });
 
+test("Stockpulse HTTPS uses its own certificate and canonical host", () => {
+  const nginx = fs.readFileSync(path.join(workspace, "deploy", "nginx.stockpulse.conf"), "utf8");
+  assert.match(nginx, /listen 443 ssl;/);
+  assert.match(nginx, /server_name stockpulse\.com\.cn;/);
+  assert.match(nginx, /server_name www\.stockpulse\.com\.cn;/);
+  assert.match(nginx, /ssl_certificate \/etc\/letsencrypt\/live\/stockpulse\.com\.cn\/fullchain\.pem;/);
+  assert.match(nginx, /return 301 https:\/\/stockpulse\.com\.cn\$request_uri;/);
+  assert.doesNotMatch(nginx, /pilatesai\.com\.cn/);
+});
+
 test("release dry-run uses a clean Git commit without contacting a server", () => {
   const repository = fs.mkdtempSync(path.join(os.tmpdir(), "stockpulse-release-test-"));
   fs.mkdirSync(path.join(repository, "scripts"));

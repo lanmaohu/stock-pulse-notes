@@ -41,6 +41,7 @@ test("Stockpulse HTTPS uses its own certificate and canonical host", () => {
   assert.match(nginx, /server_name www\.stockpulse\.com\.cn;/);
   assert.match(nginx, /ssl_certificate \/etc\/letsencrypt\/live\/stockpulse\.com\.cn\/fullchain\.pem;/);
   assert.match(nginx, /return 301 https:\/\/stockpulse\.com\.cn\$request_uri;/);
+  assert.match(nginx, /location ~ \^\/api\/content-items\/\[\^\/\]\+\/analysis-retry\$ \{[\s\S]*proxy_read_timeout 120s;/);
   assert.doesNotMatch(nginx, /pilatesai\.com\.cn/);
 });
 

@@ -81,6 +81,74 @@ test("DeepSeek client uses either supported model with the same structured reque
   }
 });
 
+test("DeepSeek client retries an empty JSON response once with non-thinking text output", async () => {
+  const requestBodies: Record<string, unknown>[] = [];
+  let calls = 0;
+  const client = createDeepSeekClient("deepseek-v4-flash", async (_input, init) => {
+    requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    calls += 1;
+    if (calls === 1) {
+      return new Response(JSON.stringify({
+        choices: [{
+          finish_reason: "stop",
+          message: { content: "", reasoning_content: "internal reasoning" }
+        }],
+        usage: { prompt_tokens: 11, completion_tokens: 7 }
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: '{"summarySections":[],"views":[]}' } }],
+      usage: { prompt_tokens: 13, completion_tokens: 5 }
+    }), { status: 200 });
+  });
+
+  const result = await client.completeJson([{ role: "user", content: "return JSON" }], { transportRetries: 0 });
+  assert.equal(calls, 2);
+  assert.deepEqual(requestBodies[0]?.thinking, { type: "enabled" });
+  assert.equal(requestBodies[0]?.reasoning_effort, "high");
+  assert.deepEqual(requestBodies[0]?.response_format, { type: "json_object" });
+  assert.deepEqual(requestBodies[1]?.thinking, { type: "disabled" });
+  assert.equal("reasoning_effort" in (requestBodies[1] || {}), false);
+  assert.deepEqual(requestBodies[1]?.response_format, { type: "text" });
+  assert.match(JSON.stringify(requestBodies[1]?.messages), /上一次生成结果为空/);
+  assert.equal(result.content, '{"summarySections":[],"views":[]}');
+  assert.deepEqual(result.usage, { promptTokens: 24, completionTokens: 12 });
+});
+
+test("DeepSeek client stops after one empty-response fallback", async () => {
+  let calls = 0;
+  const client = createDeepSeekClient("deepseek-v4-pro", async () => {
+    calls += 1;
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: "" } }]
+    }), { status: 200 });
+  });
+  await assert.rejects(
+    () => client.completeJson([{ role: "user", content: "return JSON" }], { transportRetries: 0 }),
+    (error) => error instanceof AiError
+      && error.code === "invalid_response"
+      && /after one retry/.test(error.message)
+  );
+  assert.equal(calls, 2);
+});
+
+test("DeepSeek client does not retry an empty response after cancellation", async () => {
+  let calls = 0;
+  const controller = new AbortController();
+  const client = createDeepSeekClient("deepseek-v4-pro", async () => {
+    calls += 1;
+    controller.abort();
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: "" } }]
+    }), { status: 200 });
+  });
+  await assert.rejects(
+    () => client.completeJson([{ role: "user", content: "return JSON" }], { signal: controller.signal }),
+    (error) => error instanceof AiError && error.code === "aborted"
+  );
+  assert.equal(calls, 1);
+});
+
 test("unsupported explicit models fail while legacy AI_MODEL is ignored", () => {
   const previous = process.env.AI_MODEL;
   process.env.AI_MODEL = "deepseek-chat";

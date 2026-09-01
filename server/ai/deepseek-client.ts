@@ -1,14 +1,36 @@
 import { defaultDeepSeekModel, type DeepSeekModel } from "../../shared/types.js";
 import { aiConfig, requiredSecret } from "../config.js";
 import { fetchWithPolicy } from "../http-client.js";
+import { log } from "../observability/logger.js";
 import { AiError, type AiClient, type AiCompletion, type AiCompletionOptions, type AiMessage } from "./types.js";
 
 type RequestFunction = typeof fetchWithPolicy;
 
 interface DeepSeekResponse {
   model?: string;
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{
+    finish_reason?: string;
+    message?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+    };
+  }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+function retryMessages(messages: AiMessage[]) {
+  const copy = messages.map((message) => ({ ...message }));
+  for (let index = copy.length - 1; index >= 0; index -= 1) {
+    if (copy[index]?.role !== "user") continue;
+    copy[index]!.content += "\n\n上一次生成结果为空。请立即输出一个非空、可被 JSON.parse 解析的 JSON 对象；不要输出 Markdown 代码块或任何 JSON 之外的文字。";
+    break;
+  }
+  return copy;
+}
+
+function addUsage(current: number | undefined, next: number | undefined) {
+  if (current === undefined && next === undefined) return undefined;
+  return (current || 0) + (next || 0);
 }
 
 function responseError(status: number) {
@@ -48,51 +70,69 @@ export function createDeepSeekClient(
         throw new AiError("configuration", "DEEPSEEK_API_KEY is not configured.");
       }
 
-      let response: Response;
-      try {
-        response = await request(
-          config.endpoint,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({
-              model: config.model,
-              messages,
-              thinking: { type: "enabled" },
-              reasoning_effort: "high",
-              response_format: { type: "json_object" },
-              max_tokens: config.maxOutputTokens,
-              stream: false
-            }),
-            signal: options.signal
-          },
-          {
-            timeoutMs: config.timeoutMs,
-            retries: options.transportRetries ?? 1,
-            retryStatuses: (status) => status === 429 || status >= 500
-          }
-        );
-      } catch (error) {
-        throw requestFailure(error, options.signal);
-      }
-      if (!response.ok) throw responseError(response.status);
-
-      let body: DeepSeekResponse;
-      try {
-        body = (await response.json()) as DeepSeekResponse;
-      } catch {
-        throw new AiError("invalid_response", "DeepSeek returned invalid JSON.");
-      }
-      const content = body.choices?.[0]?.message?.content;
-      if (!content) throw new AiError("invalid_response", "DeepSeek returned an empty response.");
-      return {
-        content,
-        model: config.model,
-        usage: {
-          promptTokens: body.usage?.prompt_tokens,
-          completionTokens: body.usage?.completion_tokens
+      let promptTokens: number | undefined;
+      let completionTokens: number | undefined;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (options.signal?.aborted) throw new AiError("aborted", "DeepSeek request was cancelled.");
+        const fallback = attempt === 1;
+        let response: Response;
+        try {
+          response = await request(
+            config.endpoint,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+              body: JSON.stringify({
+                model: config.model,
+                messages: fallback ? retryMessages(messages) : messages,
+                thinking: { type: fallback ? "disabled" : "enabled" },
+                ...(fallback ? {} : { reasoning_effort: "high" }),
+                response_format: { type: fallback ? "text" : "json_object" },
+                max_tokens: config.maxOutputTokens,
+                stream: false
+              }),
+              signal: options.signal
+            },
+            {
+              timeoutMs: config.timeoutMs,
+              retries: options.transportRetries ?? 1,
+              retryStatuses: (status) => status === 429 || status >= 500
+            }
+          );
+        } catch (error) {
+          throw requestFailure(error, options.signal);
         }
-      };
+        if (!response.ok) throw responseError(response.status);
+
+        let body: DeepSeekResponse;
+        try {
+          body = (await response.json()) as DeepSeekResponse;
+        } catch {
+          throw new AiError("invalid_response", "DeepSeek returned invalid JSON.");
+        }
+        promptTokens = addUsage(promptTokens, body.usage?.prompt_tokens);
+        completionTokens = addUsage(completionTokens, body.usage?.completion_tokens);
+        const choice = body.choices?.[0];
+        const content = choice?.message?.content;
+        if (content?.trim()) {
+          return {
+            content,
+            model: config.model,
+            usage: { promptTokens, completionTokens }
+          };
+        }
+        if (!fallback) {
+          log("warn", "deepseek_empty_response_retry", {
+            model: config.model,
+            finishReason: choice?.finish_reason || "unknown",
+            reasoningContentLength: choice?.message?.reasoning_content?.length || 0,
+            promptTokens: body.usage?.prompt_tokens,
+            completionTokens: body.usage?.completion_tokens
+          });
+          continue;
+        }
+      }
+      throw new AiError("invalid_response", "DeepSeek returned an empty response after one retry.");
     }
   };
 }

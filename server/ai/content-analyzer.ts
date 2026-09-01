@@ -132,7 +132,7 @@ ${summaryInstruction}
 }
 
 function normalizedQuoteText(value: string) {
-  return value.replace(/\s+/gu, "").trim();
+  return value.normalize("NFKC").replace(/[\s\p{P}]+/gu, "").trim();
 }
 
 function normalizeSummarySections(payload: ContentAiPayload, content: ContentItem): ContentSummarySection[] {

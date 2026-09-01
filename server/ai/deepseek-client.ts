@@ -85,8 +85,7 @@ export function createDeepSeekClient(
               body: JSON.stringify({
                 model: config.model,
                 messages: fallback ? retryMessages(messages) : messages,
-                thinking: { type: fallback ? "disabled" : "enabled" },
-                ...(fallback ? {} : { reasoning_effort: "high" }),
+                thinking: { type: "disabled" },
                 response_format: { type: fallback ? "text" : "json_object" },
                 max_tokens: config.maxOutputTokens,
                 stream: false
@@ -114,7 +113,8 @@ export function createDeepSeekClient(
         completionTokens = addUsage(completionTokens, body.usage?.completion_tokens);
         const choice = body.choices?.[0];
         const content = choice?.message?.content;
-        if (content?.trim()) {
+        const truncated = choice?.finish_reason === "length";
+        if (content?.trim() && !truncated) {
           return {
             content,
             model: config.model,
@@ -122,14 +122,18 @@ export function createDeepSeekClient(
           };
         }
         if (!fallback) {
-          log("warn", "deepseek_empty_response_retry", {
+          log("warn", "deepseek_response_retry", {
             model: config.model,
+            reason: truncated ? "truncated" : "empty",
             finishReason: choice?.finish_reason || "unknown",
             reasoningContentLength: choice?.message?.reasoning_content?.length || 0,
             promptTokens: body.usage?.prompt_tokens,
             completionTokens: body.usage?.completion_tokens
           });
           continue;
+        }
+        if (truncated) {
+          throw new AiError("invalid_response", "DeepSeek response was truncated after one retry.");
         }
       }
       throw new AiError("invalid_response", "DeepSeek returned an empty response after one retry.");

@@ -73,15 +73,15 @@ test("DeepSeek client uses either supported model with the same structured reque
     assert.equal(client.model, model);
     assert.equal(result.model, model);
     assert.equal(requestBody?.model, model);
-    assert.deepEqual(requestBody?.thinking, { type: "enabled" });
+    assert.deepEqual(requestBody?.thinking, { type: "disabled" });
     assert.deepEqual(requestBody?.response_format, { type: "json_object" });
-    assert.equal(requestBody?.reasoning_effort, "high");
+    assert.equal("reasoning_effort" in (requestBody || {}), false);
     assert.equal(requestBody?.stream, false);
     assert.equal(retries, 1);
   }
 });
 
-test("DeepSeek client retries an empty JSON response once with non-thinking text output", async () => {
+test("DeepSeek client retries an empty JSON response once with text output", async () => {
   const requestBodies: Record<string, unknown>[] = [];
   let calls = 0;
   const client = createDeepSeekClient("deepseek-v4-flash", async (_input, init) => {
@@ -104,8 +104,8 @@ test("DeepSeek client retries an empty JSON response once with non-thinking text
 
   const result = await client.completeJson([{ role: "user", content: "return JSON" }], { transportRetries: 0 });
   assert.equal(calls, 2);
-  assert.deepEqual(requestBodies[0]?.thinking, { type: "enabled" });
-  assert.equal(requestBodies[0]?.reasoning_effort, "high");
+  assert.deepEqual(requestBodies[0]?.thinking, { type: "disabled" });
+  assert.equal("reasoning_effort" in (requestBodies[0] || {}), false);
   assert.deepEqual(requestBodies[0]?.response_format, { type: "json_object" });
   assert.deepEqual(requestBodies[1]?.thinking, { type: "disabled" });
   assert.equal("reasoning_effort" in (requestBodies[1] || {}), false);
@@ -113,6 +113,25 @@ test("DeepSeek client retries an empty JSON response once with non-thinking text
   assert.match(JSON.stringify(requestBodies[1]?.messages), /上一次生成结果为空/);
   assert.equal(result.content, '{"summarySections":[],"views":[]}');
   assert.deepEqual(result.usage, { promptTokens: 24, completionTokens: 12 });
+});
+
+test("DeepSeek client retries a truncated JSON response even when it contains partial content", async () => {
+  let calls = 0;
+  const client = createDeepSeekClient("deepseek-v4-flash", async () => {
+    calls += 1;
+    return new Response(JSON.stringify(calls === 1 ? {
+      choices: [{ finish_reason: "length", message: { content: '{"summarySections":[' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 6_000 }
+    } : {
+      choices: [{ finish_reason: "stop", message: { content: '{"summarySections":[],"views":[]}' } }],
+      usage: { prompt_tokens: 12, completion_tokens: 4 }
+    }), { status: 200 });
+  });
+
+  const result = await client.completeJson([{ role: "user", content: "return JSON" }], { transportRetries: 0 });
+  assert.equal(calls, 2);
+  assert.equal(result.content, '{"summarySections":[],"views":[]}');
+  assert.deepEqual(result.usage, { promptTokens: 22, completionTokens: 6_004 });
 });
 
 test("DeepSeek client stops after one empty-response fallback", async () => {
@@ -220,6 +239,14 @@ test("summary evidence outside the transcript fails without another model reques
     (error) => error instanceof AiError && error.code === "invalid_response"
   );
   assert.equal(calls.length, 1);
+});
+
+test("summary evidence allows punctuation differences but not wording changes", async () => {
+  const { client } = fakeClient([
+    '{"summarySections":[{"heading":"摘要","body":"字幕摘要。","sourceQuotes":["字幕，内容！"]}],"views":[]}'
+  ]);
+  const result = await analyzeContent(content({ transcript: "字幕内容" }), { client, log: () => undefined });
+  assert.deepEqual(result.summarySections[0]?.sourceQuotes, ["字幕，内容！"]);
 });
 
 test("analysis logs metadata only and never logs transcript content", async () => {

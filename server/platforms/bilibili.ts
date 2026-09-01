@@ -58,8 +58,13 @@ const mixinKeyOrder = [
   11, 36, 20, 34, 44, 52
 ];
 const userAgent =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
 let wbiCache: { key: string; expiresAt: number } | null = null;
+
+const bilibiliRequestIntervalMs = 1_500;
+const bilibiliRequestJitterMs = 750;
+const bilibiliRateLimitRetryDelaysMs = [8_000, 20_000];
+const bilibiliRateLimitFinalCooldownMs = 60_000;
 
 function sleep(milliseconds: number, signal?: AbortSignal) {
   if (signal?.aborted) return Promise.reject(signal.reason);
@@ -96,22 +101,83 @@ function platformError(status: number, message = "") {
   return new PlatformError("platform_error", message || `B 站请求失败（${status}）。`);
 }
 
+interface BilibiliRequestClientOptions {
+  fetcher?: typeof fetchWithPolicy;
+  wait?: typeof sleep;
+  now?: () => number;
+  random?: () => number;
+  minIntervalMs?: number;
+  jitterMs?: number;
+  retryDelaysMs?: number[];
+  finalCooldownMs?: number;
+}
+
+export function createBilibiliRequestClient(options: BilibiliRequestClientOptions = {}) {
+  const fetcher = options.fetcher || fetchWithPolicy;
+  const wait = options.wait || sleep;
+  const now = options.now || Date.now;
+  const random = options.random || Math.random;
+  const minIntervalMs = options.minIntervalMs ?? bilibiliRequestIntervalMs;
+  const jitterMs = options.jitterMs ?? bilibiliRequestJitterMs;
+  const retryDelaysMs = options.retryDelaysMs || bilibiliRateLimitRetryDelaysMs;
+  const finalCooldownMs = options.finalCooldownMs ?? bilibiliRateLimitFinalCooldownMs;
+  let queue = Promise.resolve();
+  let nextRequestAt = 0;
+
+  const cooldown = (milliseconds: number) => {
+    nextRequestAt = Math.max(nextRequestAt, now() + milliseconds);
+  };
+
+  const waitForTurn = async (signal?: AbortSignal) => {
+    const turn = queue.then(async () => {
+      const remaining = Math.max(0, nextRequestAt - now());
+      if (remaining) await wait(remaining, signal);
+      const jitter = jitterMs > 0 ? Math.floor(random() * jitterMs) : 0;
+      nextRequestAt = now() + minIntervalMs + jitter;
+    });
+    queue = turn.catch(() => undefined);
+    await turn;
+  };
+
+  const retryOrThrow = (error: PlatformError, attempt: number) => {
+    if (error.code !== "rate_limited") throw error;
+    const retryDelay = retryDelaysMs[attempt];
+    cooldown(retryDelay ?? finalCooldownMs);
+    if (retryDelay === undefined) throw error;
+  };
+
+  async function requestJson<T>(url: string, credential: string, signal?: AbortSignal): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
+      await waitForTurn(signal);
+      const response = await fetcher(
+        url,
+        { headers: headers(credential), signal },
+        { timeoutMs: 12_000, retries: 1 }
+      );
+      if (!response.ok) {
+        const error = platformError(response.status);
+        if (error.code === "rate_limited") await response.body?.cancel();
+        retryOrThrow(error, attempt);
+        continue;
+      }
+      const body = (await response.json()) as BilibiliEnvelope<T>;
+      if (body.code === 0 && body.data !== undefined) return body.data;
+      const error = body.code === -101
+        ? platformError(401, body.message)
+        : body.code === -352 || body.code === -509
+          ? platformError(412, body.message)
+          : new PlatformError("platform_error", body.message || `B 站接口返回错误 ${body.code ?? "unknown"}。`);
+      retryOrThrow(error, attempt);
+    }
+  }
+
+  return { requestJson };
+}
+
+const bilibiliRequestClient = createBilibiliRequestClient();
+
 async function bilibiliJson<T>(url: string, credential: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetchWithPolicy(url, { headers: headers(credential), signal }, { timeoutMs: 12_000, retries: 1 });
-  if (!response.ok) {
-    throw platformError(response.status);
-  }
-  const body = (await response.json()) as BilibiliEnvelope<T>;
-  if (body.code !== 0 || body.data === undefined) {
-    if (body.code === -101) {
-      throw platformError(401, body.message);
-    }
-    if (body.code === -352 || body.code === -509) {
-      throw platformError(412, body.message);
-    }
-    throw new PlatformError("platform_error", body.message || `B 站接口返回错误 ${body.code ?? "unknown"}。`);
-  }
-  return body.data;
+  return bilibiliRequestClient.requestJson<T>(url, credential, signal);
 }
 
 function imageKey(url: string | undefined) {

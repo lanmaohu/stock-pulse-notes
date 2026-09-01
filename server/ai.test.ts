@@ -230,15 +230,31 @@ test("invalid model output fails without a repair request", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("summary evidence outside the transcript fails without another model request", async () => {
+test("summary evidence is repaired once with verbatim transcript quotes", async () => {
   const { client, calls } = fakeClient([
-    '{"summarySections":[{"heading":"虚构内容","body":"字幕没有表达的内容。","sourceQuotes":["不存在的原文"]}],"views":[]}'
+    '{"summarySections":[{"heading":"核心内容","body":"视频介绍字幕内容。","sourceQuotes":["改写后的引用"]}],"views":[]}',
+    '{"summarySections":[{"sourceQuotes":["字幕内容"]}]}'
+  ]);
+  const logs: Record<string, unknown>[] = [];
+  const result = await analyzeContent(content(), { client, log: (entry) => logs.push(entry) });
+  assert.deepEqual(result.summarySections[0]?.sourceQuotes, ["字幕内容"]);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1]?.messages[0]?.content || "", /只负责校对字幕原文引用/);
+  assert.equal(logs[0]?.quoteRepairAttempted, true);
+  assert.equal(logs[0]?.promptTokens, 20);
+  assert.equal(logs[0]?.completionTokens, 10);
+});
+
+test("invalid repaired evidence fails after exactly one repair request", async () => {
+  const { client, calls } = fakeClient([
+    '{"summarySections":[{"heading":"虚构内容","body":"字幕没有表达的内容。","sourceQuotes":["不存在的原文"]}],"views":[]}',
+    '{"summarySections":[{"sourceQuotes":["仍然不存在"]}]}'
   ]);
   await assert.rejects(
     () => analyzeContent(content(), { client, log: () => undefined }),
     (error) => error instanceof AiError && error.code === "invalid_response"
   );
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test("summary evidence allows punctuation differences but not wording changes", async () => {
@@ -246,7 +262,7 @@ test("summary evidence allows punctuation differences but not wording changes", 
     '{"summarySections":[{"heading":"摘要","body":"字幕摘要。","sourceQuotes":["字幕，内容！"]}],"views":[]}'
   ]);
   const result = await analyzeContent(content({ transcript: "字幕内容" }), { client, log: () => undefined });
-  assert.deepEqual(result.summarySections[0]?.sourceQuotes, ["字幕，内容！"]);
+  assert.deepEqual(result.summarySections[0]?.sourceQuotes, ["字幕内容"]);
 });
 
 test("analysis logs metadata only and never logs transcript content", async () => {

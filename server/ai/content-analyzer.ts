@@ -233,11 +233,13 @@ function normalizeSummarySections(payload: ContentAiPayload, content: ContentIte
       .map((quote) => stringValue(quote, limits.summaryQuote))
       .filter(Boolean)
       .slice(0, 2);
-    const sourceQuotes = proposedQuotes.map((quote) => exactTranscriptQuote(quoteIndex, quote));
-    if (!sourceQuotes.length || sourceQuotes.some((quote) => !quote)) {
+    const sourceQuotes = proposedQuotes
+      .map((quote) => exactTranscriptQuote(quoteIndex, quote))
+      .filter((quote): quote is string => Boolean(quote));
+    if (!sourceQuotes.length) {
       throw new SummaryEvidenceError();
     }
-    return { heading, body, sourceQuotes: sourceQuotes as string[] };
+    return { heading, body, sourceQuotes };
   });
   if (!sections.length) throw new AiError("invalid_response", "AI response did not contain a transcript summary.");
   return sections;

@@ -265,6 +265,15 @@ test("summary evidence allows punctuation differences but not wording changes", 
   assert.deepEqual(result.summarySections[0]?.sourceQuotes, ["字幕内容"]);
 });
 
+test("summary evidence keeps verified quotes and drops an invalid extra quote", async () => {
+  const { client, calls } = fakeClient([
+    '{"summarySections":[{"heading":"摘要","body":"字幕摘要。","sourceQuotes":["字幕内容","改写后的引用"]}],"views":[]}'
+  ]);
+  const result = await analyzeContent(content({ transcript: "字幕内容" }), { client, log: () => undefined });
+  assert.deepEqual(result.summarySections[0]?.sourceQuotes, ["字幕内容"]);
+  assert.equal(calls.length, 1);
+});
+
 test("analysis logs metadata only and never logs transcript content", async () => {
   const secretTranscript = "PRIVATE_TRANSCRIPT_SHOULD_NOT_BE_LOGGED";
   const { client } = fakeClient(['{"summarySections":[{"heading":"摘要","body":"字幕内容摘要。","sourceQuotes":["PRIVATE_TRANSCRIPT_SHOULD_NOT_BE_LOGGED"]}],"views":[]}']);

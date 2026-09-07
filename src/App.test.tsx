@@ -89,6 +89,9 @@ describe("application routes", () => {
 
     const expandButton = await screen.findByRole("button", { name: "展开观点：测试视频" });
     expect(expandButton).toHaveAttribute("aria-expanded", "false");
+    expect(expandButton).toHaveTextContent("阅读观点");
+    expect(screen.getByRole("region", { name: "当前筛选统计" })).toBeInTheDocument();
+    expect(screen.getByText("1 条观点")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "测试视频" })).toBeInTheDocument();
     expect(screen.queryByText("B 站字幕文字稿")).not.toBeInTheDocument();
     expect(screen.queryByText("测试视频的核心观点")).not.toBeInTheDocument();
@@ -99,6 +102,7 @@ describe("application routes", () => {
     expandButton.click();
     const collapseButton = await screen.findByRole("button", { name: "收起观点：测试视频" });
     expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+    expect(collapseButton).toHaveTextContent("收起");
     expect(await screen.findByText("测试视频的核心观点")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "内容摘要" })).toBeInTheDocument();
     expect(screen.getByText("测试视频围绕核心观点展开说明。")).toBeInTheDocument();

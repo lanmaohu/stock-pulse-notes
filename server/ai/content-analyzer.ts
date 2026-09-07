@@ -287,7 +287,7 @@ export async function analyzeContent(
   let completionTokens: number | undefined;
   let quoteRepairAttempted = false;
   try {
-    const completion = await client.completeJson(promptFor(content), { signal: options.signal, transportRetries: 0 });
+    const completion = await client.completeJson(promptFor(content), { signal: options.signal, transportRetries: 0, contentId: content.id });
     promptTokens = completion.usage.promptTokens;
     completionTokens = completion.usage.completionTokens;
     const payload = parsePayload(completion.content);
@@ -298,6 +298,7 @@ export async function analyzeContent(
       if (!(error instanceof SummaryEvidenceError) || content.transcriptSource !== "subtitle") throw error;
       quoteRepairAttempted = true;
       const repair = await client.completeJson(summaryRepairPromptFor(content, payload), {
+        contentId: content.id,
         signal: options.signal,
         transportRetries: 0
       });
@@ -346,6 +347,8 @@ export async function analyzeContent(
     const aiError = error instanceof AiError
       ? error
       : new AiError("invalid_response", error instanceof Error ? error.message : "AI analysis failed.");
+    if (aiError.usage?.promptTokens !== undefined) promptTokens = (promptTokens || 0) + aiError.usage.promptTokens;
+    if (aiError.usage?.completionTokens !== undefined) completionTokens = (completionTokens || 0) + aiError.usage.completionTokens;
     logEntry(options.log, {
       level: aiError.code === "aborted" ? "info" : "error",
       event: "content_analysis_failed",

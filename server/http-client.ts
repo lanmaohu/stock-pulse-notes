@@ -2,6 +2,7 @@ export interface FetchPolicy {
   timeoutMs?: number;
   retries?: number;
   retryStatuses?: (status: number) => boolean;
+  onAttempt?: (attempt: number) => void;
 }
 function wait(milliseconds: number, signal?: AbortSignal | null) {
   if (signal?.aborted) return Promise.reject(signal.reason);
@@ -34,12 +35,16 @@ export async function fetchWithPolicy(
     const externalSignal = init.signal;
     const signal = externalSignal ? AbortSignal.any([externalSignal, controller.signal]) : controller.signal;
     try {
+      policy.onAttempt?.(attempt);
       const response = await fetch(input, { ...init, signal });
       if (attempt < retries && retryStatuses(response.status)) {
         await response.body?.cancel();
         await wait(500 * (attempt + 1), externalSignal);
         continue;
       }
+      // All callers consume JSON/text, not streaming bodies. Drain a clone while
+      // the deadline is active, preserving the original Response and its headers.
+      await response.clone().arrayBuffer();
       return response;
     } catch (error) {
       lastError = error;

@@ -115,11 +115,18 @@ export function listContentCreatorOptions(): ContentCreatorOption[] {
 }
 
 export function upsertContent(input: ContentInput): { content: ContentItem; isNew: boolean } {
+  return withTransaction(() => upsertContentLocked(input), "immediate");
+}
+
+function upsertContentLocked(input: ContentInput): { content: ContentItem; isNew: boolean } {
   const connection = database();
   const existing = connection
     .prepare("SELECT * FROM content_items WHERE platform = ? AND externalId = ?")
     .get(input.platform, input.externalId) as ContentItemRow | undefined;
-  const now = new Date().toISOString();
+  // A running analysis owns this exact text and updatedAt lease. Do not refresh
+  // its lease or change the source underneath it during a concurrent collection.
+  if (existing?.analysisStatus === "running") return { content: toContent(existing), isNew: false };
+  const now = new Date(Math.max(Date.now(), existing ? Date.parse(existing.updatedAt) + 1 : 0)).toISOString();
   const id = existing?.id || crypto.randomUUID();
   const sourceRank: Record<ContentItem["transcriptSource"], number> = { metadata: 0, body: 1, subtitle: 2 };
   const upgradedTranscript = existing ? sourceRank[input.transcriptSource] > sourceRank[existing.transcriptSource] : false;
@@ -200,30 +207,43 @@ export function getContentInsight(id: string): ContentInsight | null {
   return { content: toContent(contentRow), views: viewRows.map(toView) };
 }
 
-export function markContentAnalysisStatus(id: string, status: ContentItem["analysisStatus"], error?: string) {
-  database().prepare("UPDATE content_items SET analysisStatus = ?, error = ?, updatedAt = ? WHERE id = ?")
-    .run(status, error || null, new Date().toISOString(), id);
-}
-
-export function beginContentAnalysisRetry(id: string) {
-  const result = database().prepare(`
-    UPDATE content_items SET analysisStatus = 'running', error = NULL, updatedAt = ?
-    WHERE id = ? AND analysisStatus = 'error'
-  `).run(new Date().toISOString(), id);
+export function markContentAnalysisStatus(id: string, status: ContentItem["analysisStatus"], error?: string, lease?: string) {
+  const result = database().prepare(`UPDATE content_items SET analysisStatus = ?, error = ?, updatedAt = ? WHERE id = ?
+    ${lease ? "AND analysisStatus = 'running' AND updatedAt = ?" : ""}`)
+    .run(status, error || null, new Date(Math.max(Date.now(), lease ? Date.parse(lease) + 1 : 0)).toISOString(), id, ...(lease ? [lease] : []));
   return Number(result.changes) === 1;
 }
 
-export function resetContentAnalysis(id: string) {
+// Four bounded 90-second requests fit comfortably inside this lease.
+export const contentAnalysisLeaseMs = 10 * 60 * 1_000;
+
+export function claimContentAnalysis(id: string, onlyFailed = false, now = Date.now()): ContentItem | null {
+  return withTransaction((connection) => {
+    const row = connection.prepare("SELECT * FROM content_items WHERE id = ?").get(id) as ContentItemRow | undefined;
+    if (!row) return null;
+    const expired = row.analysisStatus === "running" && Date.parse(row.updatedAt) <= now - contentAnalysisLeaseMs;
+    if (row.analysisStatus !== "error" && !(row.analysisStatus === "pending" && !onlyFailed) && !expired) return null;
+    const lease = new Date(Math.max(now, Date.parse(row.updatedAt) + 1)).toISOString();
+    connection.prepare("UPDATE content_items SET analysisStatus = 'running', error = NULL, updatedAt = ? WHERE id = ?")
+      .run(lease, id);
+    return toContent({ ...row, analysisStatus: "running", error: null, updatedAt: lease });
+  }, "immediate");
+}
+
+export function resetContentAnalysis(id: string, lease?: string) {
   const result = database().prepare(`
     UPDATE content_items SET analysisStatus = 'pending', error = NULL, updatedAt = ?
     WHERE id = ? AND analysisStatus = 'running'
-  `).run(new Date().toISOString(), id);
+    ${lease ? "AND updatedAt = ?" : ""}
+  `).run(new Date(Math.max(Date.now(), lease ? Date.parse(lease) + 1 : 0)).toISOString(), id, ...(lease ? [lease] : []));
   return Number(result.changes) === 1;
 }
 
-export function saveContentAnalysis(content: ContentItem, analysis: ContentAnalysisResult) {
-  const now = new Date().toISOString();
-  withTransaction((connection) => {
+export function saveContentAnalysis(content: ContentItem, analysis: ContentAnalysisResult, lease?: string) {
+  const now = new Date(Math.max(Date.now(), lease ? Date.parse(lease) + 1 : 0)).toISOString();
+  return withTransaction((connection) => {
+    if (lease && !connection.prepare("SELECT 1 FROM content_items WHERE id = ? AND analysisStatus = 'running' AND updatedAt = ?")
+      .get(content.id, lease)) return false;
     connection.prepare("DELETE FROM content_stock_views WHERE contentId = ?").run(content.id);
     const insert = connection.prepare(`
       INSERT INTO content_stock_views (
@@ -250,7 +270,8 @@ export function saveContentAnalysis(content: ContentItem, analysis: ContentAnaly
       SET summarySections = ?, analysisStatus = 'success', error = NULL, updatedAt = ?
       WHERE id = ?
     `).run(JSON.stringify(summarySections), now, content.id);
-  });
+    return true;
+  }, "immediate");
 }
 
 export function listContentInsights(options: {

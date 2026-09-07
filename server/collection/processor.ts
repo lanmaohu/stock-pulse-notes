@@ -6,6 +6,7 @@ import {
   startCollectionRunItem
 } from "../repositories/collection.js";
 import {
+  claimContentAnalysis,
   markContentAnalysisStatus,
   resetContentAnalysis,
   saveContentAnalysis,
@@ -30,6 +31,7 @@ export interface ProcessCreatorOptions {
 }
 
 export interface CollectionProcessorDependencies {
+  claimAnalysis: typeof claimContentAnalysis;
   analyze: typeof analyzeContent;
   finishItem: typeof finishCollectionRunItem;
   settings: typeof getCollectionSettings;
@@ -47,6 +49,7 @@ export interface CollectionProcessorDependencies {
 }
 
 const defaultDependencies: CollectionProcessorDependencies = {
+  claimAnalysis: claimContentAnalysis,
   analyze: analyzeContent,
   finishItem: finishCollectionRunItem,
   settings: getCollectionSettings,
@@ -119,21 +122,20 @@ export function createCollectionProcessor(overrides: Partial<CollectionProcessor
           error: input.warning
         });
         if (saved.isNew) newContentCount += 1;
-        if (saved.content.analysisStatus !== "success") {
-          dependencies.markAnalysis(saved.content.id, "running");
+        const claimed = saved.content.analysisStatus === "success" ? null : dependencies.claimAnalysis(saved.content.id);
+        if (claimed) {
           try {
-            const analysis = await dependencies.analyze(saved.content, { signal, model: settings.analysisModel });
+            const analysis = await dependencies.analyze(claimed, { signal, model: settings.analysisModel });
             assertActive(signal);
-            dependencies.saveAnalysis(saved.content, analysis);
-            analyzedCount += 1;
+            if (dependencies.saveAnalysis(claimed, analysis, claimed.updatedAt)) analyzedCount += 1;
           } catch (error) {
             if (isCollectionCancellation(error, signal)) {
-              dependencies.resetAnalysis(saved.content.id);
+              dependencies.resetAnalysis(claimed.id, claimed.updatedAt);
               throw error;
             }
             const message = error instanceof Error ? error.message : "投资观点分析失败。";
             analysisErrors.push(message);
-            dependencies.markAnalysis(saved.content.id, "error", message.slice(0, 1_000));
+            dependencies.markAnalysis(claimed.id, "error", message.slice(0, 1_000), claimed.updatedAt);
           }
         }
       }

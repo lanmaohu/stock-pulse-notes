@@ -11,7 +11,8 @@ export class AiError extends Error {
   constructor(
     public readonly code: AiErrorCode,
     message: string,
-    public readonly status?: number
+    public readonly status?: number,
+    public readonly usage?: AiUsage
   ) {
     super(message);
     this.name = "AiError";
@@ -35,6 +36,7 @@ export interface AiCompletion {
 }
 
 export interface AiCompletionOptions {
+  contentId?: string;
   signal?: AbortSignal;
   transportRetries?: number;
 }

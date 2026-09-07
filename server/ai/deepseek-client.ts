@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { defaultDeepSeekModel, type DeepSeekModel } from "../../shared/types.js";
 import { aiConfig, requiredSecret } from "../config.js";
 import { fetchWithPolicy } from "../http-client.js";
@@ -72,71 +73,85 @@ export function createDeepSeekClient(
 
       let promptTokens: number | undefined;
       let completionTokens: number | undefined;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        if (options.signal?.aborted) throw new AiError("aborted", "DeepSeek request was cancelled.");
-        const fallback = attempt === 1;
-        let response: Response;
-        try {
-          response = await request(
-            config.endpoint,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-              body: JSON.stringify({
-                model: config.model,
-                messages: fallback ? retryMessages(messages) : messages,
-                thinking: { type: "disabled" },
-                response_format: { type: fallback ? "text" : "json_object" },
-                max_tokens: config.maxOutputTokens,
-                stream: false
-              }),
-              signal: options.signal
-            },
-            {
-              timeoutMs: config.timeoutMs,
-              retries: options.transportRetries ?? 1,
-              retryStatuses: (status) => status === 429 || status >= 500
-            }
-          );
-        } catch (error) {
-          throw requestFailure(error, options.signal);
-        }
-        if (!response.ok) throw responseError(response.status);
+      const completionId = crypto.randomUUID();
+      try {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          if (options.signal?.aborted) throw new AiError("aborted", "DeepSeek request was cancelled.");
+          const fallback = attempt === 1;
+          let response: Response;
+          try {
+            response = await request(
+              config.endpoint,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+                body: JSON.stringify({
+                  model: config.model,
+                  messages: fallback ? retryMessages(messages) : messages,
+                  thinking: { type: "disabled" },
+                  response_format: { type: fallback ? "text" : "json_object" },
+                  max_tokens: config.maxOutputTokens,
+                  stream: false
+                }),
+                signal: options.signal
+              },
+              {
+                timeoutMs: config.timeoutMs,
+                retries: options.transportRetries ?? 1,
+                retryStatuses: (status) => status === 429 || status >= 500,
+                onAttempt: (transportAttempt) => log("info", "deepseek_request_started", {
+                  completionId, contentId: options.contentId, model: config.model, attempt, transportAttempt
+                })
+              }
+            );
+          } catch (error) {
+            throw requestFailure(error, options.signal);
+          }
+          if (!response.ok) throw responseError(response.status);
 
-        let body: DeepSeekResponse;
-        try {
-          body = (await response.json()) as DeepSeekResponse;
-        } catch {
-          throw new AiError("invalid_response", "DeepSeek returned invalid JSON.");
-        }
-        promptTokens = addUsage(promptTokens, body.usage?.prompt_tokens);
-        completionTokens = addUsage(completionTokens, body.usage?.completion_tokens);
-        const choice = body.choices?.[0];
-        const content = choice?.message?.content;
-        const truncated = choice?.finish_reason === "length";
-        if (content?.trim() && !truncated) {
-          return {
-            content,
-            model: config.model,
-            usage: { promptTokens, completionTokens }
-          };
-        }
-        if (!fallback) {
-          log("warn", "deepseek_response_retry", {
-            model: config.model,
-            reason: truncated ? "truncated" : "empty",
-            finishReason: choice?.finish_reason || "unknown",
-            reasoningContentLength: choice?.message?.reasoning_content?.length || 0,
-            promptTokens: body.usage?.prompt_tokens,
-            completionTokens: body.usage?.completion_tokens
+          let body: DeepSeekResponse;
+          try {
+            body = (await response.json()) as DeepSeekResponse;
+          } catch {
+            throw new AiError("invalid_response", "DeepSeek returned invalid JSON.");
+          }
+          promptTokens = addUsage(promptTokens, body.usage?.prompt_tokens);
+          completionTokens = addUsage(completionTokens, body.usage?.completion_tokens);
+          log("info", "deepseek_response_usage", {
+            completionId, contentId: options.contentId, model: config.model, attempt,
+            promptTokens: body.usage?.prompt_tokens, completionTokens: body.usage?.completion_tokens,
+            usageAvailable: body.usage?.prompt_tokens !== undefined && body.usage?.completion_tokens !== undefined
           });
-          continue;
+          const choice = body.choices?.[0];
+          const content = choice?.message?.content;
+          const truncated = choice?.finish_reason === "length";
+          if (content?.trim() && !truncated) {
+            return {
+              content,
+              model: config.model,
+              usage: { promptTokens, completionTokens }
+            };
+          }
+          if (!fallback) {
+            log("warn", "deepseek_response_retry", {
+              model: config.model,
+              reason: truncated ? "truncated" : "empty",
+              finishReason: choice?.finish_reason || "unknown",
+              reasoningContentLength: choice?.message?.reasoning_content?.length || 0,
+              promptTokens: body.usage?.prompt_tokens,
+              completionTokens: body.usage?.completion_tokens
+            });
+            continue;
+          }
+          if (truncated) {
+            throw new AiError("invalid_response", "DeepSeek response was truncated after one retry.");
+          }
         }
-        if (truncated) {
-          throw new AiError("invalid_response", "DeepSeek response was truncated after one retry.");
-        }
+        throw new AiError("invalid_response", "DeepSeek returned an empty response after one retry.");
+      } catch (error) {
+        const failure = requestFailure(error, options.signal);
+        throw new AiError(failure.code, failure.message, failure.status, { promptTokens, completionTokens });
       }
-      throw new AiError("invalid_response", "DeepSeek returned an empty response after one retry.");
     }
   };
 }

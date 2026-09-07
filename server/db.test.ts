@@ -568,3 +568,29 @@ test("database transaction helper rolls back and schema verification checks requ
   database().exec("CREATE INDEX idx_content_items_creator ON content_items(creatorId, publishedAt DESC)");
   await db.verifyDatabaseSchema();
 });
+
+test("content analysis claims exclude competing callers, recover stale work, and fence old writes", () => {
+  const original = db.getContentItem("legacy-video")!;
+  db.markContentAnalysisStatus(original.id, "error", "retry me");
+  const first = db.claimContentAnalysis(original.id, true);
+  assert.ok(first);
+  assert.equal(db.claimContentAnalysis(original.id), null);
+  assert.equal(db.claimContentAnalysis(original.id, true), null);
+  const collected = db.upsertContent({ ...original, transcript: "concurrent replacement" });
+  assert.equal(collected.content.transcript, original.transcript);
+  assert.equal(collected.content.updatedAt, first.updatedAt);
+
+  const second = db.claimContentAnalysis(original.id, false, Date.parse(first.updatedAt) + db.contentAnalysisLeaseMs + 1);
+  assert.ok(second);
+  assert.notEqual(first.updatedAt, second.updatedAt);
+  assert.equal(db.saveContentAnalysis(first, { summarySections: [], views: [] }, first.updatedAt), false);
+  assert.equal(db.markContentAnalysisStatus(first.id, "error", "stale failure", first.updatedAt), false);
+  assert.equal(db.resetContentAnalysis(first.id, first.updatedAt), false);
+  assert.equal(db.getContentItem(original.id)?.updatedAt, second.updatedAt);
+  assert.equal(db.resetContentAnalysis(second.id, second.updatedAt), true);
+  assert.equal(db.claimContentAnalysis(original.id, true), null);
+  const third = db.claimContentAnalysis(original.id);
+  assert.ok(third);
+  assert.equal(db.saveContentAnalysis(third, { summarySections: [], views: [] }, third.updatedAt), true);
+  assert.equal(db.claimContentAnalysis(original.id), null);
+});

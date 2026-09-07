@@ -104,7 +104,8 @@ test("creator processing applies one model to all text sources, skips successes,
     { externalId: "BV1", contentType: "video" as const, transcript: "字幕", transcriptSource: "subtitle" as const, status: "ready" as const },
     { externalId: "note-1", contentType: "note" as const, transcript: "正文", transcriptSource: "body" as const, status: "ready" as const },
     { externalId: "BV2", contentType: "video" as const, transcript: "标题元数据", transcriptSource: "metadata" as const, status: "metadata_only" as const },
-    { externalId: "existing-success", contentType: "video" as const, transcript: "历史字幕", transcriptSource: "subtitle" as const, status: "ready" as const }
+    { externalId: "existing-success", contentType: "video" as const, transcript: "历史字幕", transcriptSource: "subtitle" as const, status: "ready" as const },
+    { externalId: "existing-running", contentType: "video" as const, transcript: "分析中", transcriptSource: "subtitle" as const, status: "ready" as const }
   ].map((input) => ({
     ...input,
     title: input.externalId,
@@ -144,7 +145,14 @@ test("creator processing applies one model to all text sources, skips successes,
         updatedAt: "2026-08-16T00:00:00.000Z"
       }
     }),
-    markAnalysis: () => undefined,
+    claimAnalysis: (id) => {
+      if (id === "existing-running") return null;
+      const input = collected.find((item) => item.externalId === id)!;
+      return { ...input, ...creator, id, externalId: id, creatorId: creator.id,
+        creatorExternalId: creator.externalId, creatorName: creator.name,
+        collectedAt: creator.createdAt, summarySections: [], analysisStatus: "running" };
+    },
+    markAnalysis: () => true,
     analyze: async (_content, options) => {
       analysisCalls += 1;
       analysisModels.push(options?.model);
@@ -156,7 +164,7 @@ test("creator processing applies one model to all text sources, skips successes,
         views: []
       };
     },
-    saveAnalysis: (_content, analysis) => { savedSummaryCounts.push(analysis.summarySections.length); },
+    saveAnalysis: (_content, analysis) => { savedSummaryCounts.push(analysis.summarySections.length); return true; },
     updateCreator: () => creator,
     finishItem: (_id, input) => {
       finished = input;

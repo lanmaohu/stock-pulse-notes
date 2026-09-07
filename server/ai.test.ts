@@ -151,6 +151,49 @@ test("DeepSeek client stops after one empty-response fallback", async () => {
   assert.equal(calls, 2);
 });
 
+test("failed empty and truncated fallbacks preserve all reported token usage", async () => {
+  for (const finishReason of ["stop", "length"]) {
+    const client = createDeepSeekClient("deepseek-v4-flash", async () => new Response(JSON.stringify({
+      choices: [{ finish_reason: finishReason, message: { content: "" } }],
+      usage: { prompt_tokens: 11, completion_tokens: 7 }
+    })));
+    await assert.rejects(() => client.completeJson([{ role: "user", content: "test" }]), (error) => {
+      assert.ok(error instanceof AiError);
+      assert.deepEqual(error.usage, { promptTokens: 22, completionTokens: 14 });
+      return true;
+    });
+  }
+});
+
+test("an upstream fallback error retains usage from the earlier paid response", async () => {
+  let calls = 0;
+  const client = createDeepSeekClient("deepseek-v4-flash", async () => ++calls === 1
+    ? new Response(JSON.stringify({ choices: [{ message: { content: "" } }], usage: { prompt_tokens: 11, completion_tokens: 7 } }))
+    : new Response("unavailable", { status: 503 }));
+  await assert.rejects(() => client.completeJson([{ role: "user", content: "test" }]), (error) => {
+    assert.ok(error instanceof AiError);
+    assert.equal(error.code, "upstream");
+    assert.deepEqual(error.usage, { promptTokens: 11, completionTokens: 7 });
+    return true;
+  });
+});
+
+test("analysis failure logs include usage consumed by a failed quote repair", async () => {
+  let calls = 0;
+  const entries: Record<string, unknown>[] = [];
+  const client = createDeepSeekClient("deepseek-v4-flash", async () => new Response(JSON.stringify({
+    choices: [{ message: { content: ++calls === 1
+      ? '{"summarySections":[{"heading":"标题","body":"正文","sourceQuotes":["非原文"]}],"views":[]}' : "" } }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  })));
+  await assert.rejects(() => analyzeContent(content(), { client, log: (entry) => entries.push(entry) }));
+  assert.equal(calls, 3);
+  const failed = entries.find((entry) => entry.event === "content_analysis_failed");
+  assert.equal(failed?.promptTokens, 30);
+  assert.equal(failed?.completionTokens, 15);
+  assert.equal(failed?.quoteRepairAttempted, true);
+});
+
 test("DeepSeek client does not retry an empty response after cancellation", async () => {
   let calls = 0;
   const controller = new AbortController();

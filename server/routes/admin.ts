@@ -23,7 +23,7 @@ import { analyzeContent } from "../ai.js";
 import { deletePlatformAccount, listCreators, listPlatformAccounts } from "../repositories/platform.js";
 import { getCollectionRun, getCollectionSettings, listCollectionRuns, updateCollectionSettings } from "../repositories/collection.js";
 import {
-  beginContentAnalysisRetry,
+  claimContentAnalysis,
   getContentInsight,
   getContentItem,
   markContentAnalysisStatus,
@@ -111,23 +111,27 @@ adminRouter.get("/platform-accounts/:platform/qr/:sessionId", async (req, res, n
   }
 });
 
-adminRouter.delete("/platform-accounts/:platform/qr/:sessionId", async (req, res) => {
-  const platform = platformValue(routeParam(req, "platform"));
-  if (!await cancelPlatformQrSession(platform, routeParam(req, "sessionId"))) {
-    throw new HttpError(404, "二维码会话不存在。", "QR_SESSION_NOT_FOUND");
+adminRouter.delete("/platform-accounts/:platform/qr/:sessionId", async (req, res, next) => {
+  try {
+    const platform = platformValue(routeParam(req, "platform"));
+    if (!await cancelPlatformQrSession(platform, routeParam(req, "sessionId"))) {
+      throw new HttpError(404, "二维码会话不存在。", "QR_SESSION_NOT_FOUND");
+    }
+    res.status(204).end();
+  } catch (error) {
+    next(error);
   }
-  res.status(204).end();
 });
 
 adminRouter.post("/platform-accounts/:id/check", async (req, res, next) => {
-  const account = listPlatformAccounts().find((item) => item.id === routeParam(req, "id"));
-  if (!account) throw new HttpError(404, "平台账号不存在。", "PLATFORM_ACCOUNT_NOT_FOUND");
-  if (!isActivePlatform(account.platform)) throw new HttpError(410, "该平台接入已下线。", "PLATFORM_RETIRED");
   const request = requestAbort(req, res);
   try {
+    const account = listPlatformAccounts().find((item) => item.id === routeParam(req, "id"));
+    if (!account) throw new HttpError(404, "平台账号不存在。", "PLATFORM_ACCOUNT_NOT_FOUND");
+    if (!isActivePlatform(account.platform)) throw new HttpError(410, "该平台接入已下线。", "PLATFORM_RETIRED");
     res.json(await checkPlatformAccount(account.platform, request.signal));
   } catch (error) {
-    next(platformHttpError(error, "平台账号检查失败。", "PLATFORM_CHECK_FAILED"));
+    next(error instanceof HttpError ? error : platformHttpError(error, "平台账号检查失败。", "PLATFORM_CHECK_FAILED"));
   } finally {
     request.dispose();
   }
@@ -186,21 +190,23 @@ adminRouter.post("/content-items/:id/analysis-retry", async (req, res: Response<
     const contentId = routeParam(req, "id");
     const content = getContentItem(contentId);
     if (!content) throw new HttpError(404, "内容不存在。", "CONTENT_NOT_FOUND");
-    if (!beginContentAnalysisRetry(contentId)) {
+    const claimed = claimContentAnalysis(contentId, true);
+    if (!claimed) {
       throw new HttpError(409, content.analysisStatus === "running" ? "内容正在分析中。" : "只有分析失败的内容可以重试。", "CONTENT_ANALYSIS_NOT_RETRYABLE");
     }
 
     const request = requestAbort(req, res);
     let insight: ContentInsight;
     try {
-      const analysis = await analyzeContent(content, { signal: request.signal, model: getCollectionSettings().analysisModel });
-      saveContentAnalysis(content, analysis);
+      const analysis = await analyzeContent(claimed, { signal: request.signal, model: getCollectionSettings().analysisModel });
+      if (request.signal.aborted) throw request.signal.reason;
+      if (!saveContentAnalysis(claimed, analysis, claimed.updatedAt)) throw new Error("内容分析任务已被其他任务接管。");
       const saved = getContentInsight(contentId);
       if (!saved) throw new Error("Content disappeared after analysis.");
       insight = saved;
     } catch (error) {
       const message = error instanceof Error ? error.message : "投资观点分析失败。";
-      markContentAnalysisStatus(contentId, "error", message.slice(0, 1_000));
+      markContentAnalysisStatus(contentId, "error", message.slice(0, 1_000), claimed.updatedAt);
       throw new HttpError(502, message, "CONTENT_ANALYSIS_FAILED");
     } finally {
       request.dispose();

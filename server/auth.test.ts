@@ -221,6 +221,24 @@ test("workspace administrator login shares the portfolio administrator session",
   assert.deepEqual(await logout.json(), { authenticated: false });
 });
 
+test("missing QR sessions and accounts return errors without terminating the API", async () => {
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: process.env.PORTFOLIO_ADMIN_PASSWORD })
+  });
+  const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+  for (const [method, path, status, code] of [
+    ["DELETE", "/api/platform-accounts/bilibili/qr/missing", 404, "QR_SESSION_NOT_FOUND"],
+    ["DELETE", "/api/platform-accounts/invalid/qr/missing", 400, "UNSUPPORTED_PLATFORM"],
+    ["POST", "/api/platform-accounts/missing/check", 404, "PLATFORM_ACCOUNT_NOT_FOUND"]
+  ] as const) {
+    const response = await fetch(`${baseUrl}${path}`, { method, headers: { cookie } });
+    assert.equal(response.status, status);
+    assert.equal((await response.json() as { code: string }).code, code);
+    assert.equal((await fetch(`${baseUrl}/api/health/live`)).status, 200);
+  }
+});
+
 test("administrator can select an analysis model and legacy updates preserve it", async () => {
   const login = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",

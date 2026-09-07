@@ -13,8 +13,6 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  Layers3,
-  ScanLine,
   Video,
   X
 } from "lucide-react";
@@ -225,7 +223,6 @@ function InsightCard({ insight, canRetry, onRetry }: {
                       : "等待分析"}
               </span>
               <span>{content.transcriptSource === "subtitle" ? "字幕内容" : content.transcriptSource === "body" ? "正文内容" : "仅元数据"}</span>
-              {content.analysisStatus === "success" && views.length > 0 ? <span className="view-count">{views.length} 条观点</span> : null}
             </div>
           </div>
           <button
@@ -235,7 +232,6 @@ function InsightCard({ insight, canRetry, onRetry }: {
             aria-controls={detailsId}
             aria-label={`${expanded ? "收起" : "展开"}观点：${content.title}`}
           >
-            <span>{expanded ? "收起" : "阅读观点"}</span>
             <ChevronDown size={19} />
           </button>
         </div>
@@ -342,12 +338,11 @@ function InsightsView({
 
   return (
     <>
-      <section className="metric-row" aria-label="当前筛选统计">
-        <div><span className="metric-label"><Video size={16} />内容</span><strong>{loading ? "—" : summary.contentCount.toLocaleString("zh-CN")}</strong><small>已收录的视频与图文</small></div>
-        <div><span className="metric-label"><Layers3 size={16} />观点</span><strong>{loading ? "—" : summary.viewCount.toLocaleString("zh-CN")}</strong><small>从原始内容提取整理</small></div>
-        <div><span className="metric-label"><ScanLine size={16} />涉及标的</span><strong>{loading ? "—" : summary.targetCount.toLocaleString("zh-CN")}</strong><small>发现观点之间的关联</small></div>
+      <section className="metric-row">
+        <div><span>内容</span><strong>{summary.contentCount}</strong></div>
+        <div><span>观点</span><strong>{summary.viewCount}</strong></div>
+        <div><span>涉及标的</span><strong>{summary.targetCount}</strong></div>
       </section>
-      <div className="feed-heading"><h2>内容动态<span>FEED</span></h2><p>循着观点，回到原文</p></div>
       <section className="filter-bar" ref={listTopRef}>
         <div className="date-filter">
           <CalendarDays size={17} />
@@ -364,7 +359,7 @@ function InsightsView({
           <option value="">全部博主</option>
           {creators.map((creator) => <option key={creator.id} value={creator.id}>{creator.name}</option>)}
         </select>
-        <button className="icon-button" onClick={onRefresh} disabled={loading} title="刷新观点" aria-label="刷新观点"><RefreshCw className={loading ? "spin" : undefined} size={17} /></button>
+        <button className="icon-button" onClick={onRefresh} title="刷新观点" aria-label="刷新观点"><RefreshCw size={17} /></button>
       </section>
       {loading ? (
         <div className="loading-line"><LoaderCircle className="spin" size={18} />正在加载观点</div>
@@ -406,10 +401,10 @@ function InsightsView({
 function PublicShell({ title, portfolio = false, children }: { title: string; portfolio?: boolean; children: React.ReactNode }) {
   const { authenticated, checking } = useAdminAuth();
   return (
-    <main className={`app-shell${portfolio ? "" : " insights-shell"}`}>
+    <main className="app-shell">
       <WorkspaceSidebar />
       <section className="main-column">
-        {!portfolio ? <header className="page-header"><div><span className="eyebrow">RESEARCH DESK <i /> 自媒体投资观点</span><h1>{title}<span className="heading-period" aria-hidden="true">.</span></h1><p className="page-description">汇集不同视角，让判断有据可循。</p></div>{!checking ? <Link className="secondary-button" to={authenticated ? "/admin/creators" : "/admin/login"}>{authenticated ? <ShieldCheck size={16} /> : <LogIn size={16} />}{authenticated ? "管理后台" : "管理员登录"}</Link> : null}</header> : null}
+        {!portfolio ? <header className="page-header"><div><span className="eyebrow">自媒体投资观点</span><h1>{title}</h1></div>{!checking ? <Link className="secondary-button" to={authenticated ? "/admin/creators" : "/admin/login"}>{authenticated ? <ShieldCheck size={16} /> : <LogIn size={16} />}{authenticated ? "管理后台" : "管理员登录"}</Link> : null}</header> : null}
         <WorkspaceMobileNavigation />
         {children}
         <FilingFooter />

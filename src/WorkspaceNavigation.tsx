@@ -60,9 +60,7 @@ export function WorkspaceSidebar({ hasActiveRun = false, onLogout }: { hasActive
 
   return <aside className="sidebar">
     <Brand />
-    <span className="navigation-caption">工作空间</span>
     <nav aria-label="主导航"><NavigationLinks authenticated={authenticated} hasActiveRun={hasActiveRun} /></nav>
-    <div className="sidebar-note"><Activity size={22} aria-hidden="true" /><p>看见不同观点。<br />形成自己的判断。</p><span>INFORMATION INTO PERSPECTIVE</span></div>
     <div className="sidebar-status">
       <div><ShieldCheck size={15} /><span>{checking ? "正在确认身份" : authenticated ? "管理员模式" : "公开浏览模式"}</span></div>
       {!checking && authenticated ? (
